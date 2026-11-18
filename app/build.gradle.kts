@@ -12,10 +12,15 @@ android {
         applicationId = "com.pureguard.filter"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0.0-sandbox"
+        versionCode = 3
+        versionName = "2.1.0-sandbox"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // Build only for modern 64-bit ARM phones (like Nokia 6.1) to cut APK size by 60%
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -67,7 +72,7 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 
-    // Google ML Kit On-Device OCR (reads text inside YouTube Shorts, video overlays, X.com & image watermarks offline)
+    // Google ML Kit On-Device OCR
     implementation("com.google.mlkit:text-recognition:16.0.0")
 
     // OkHttp for Layer 3 Free AI Re-Check

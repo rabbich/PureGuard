@@ -90,6 +90,15 @@
                     android:text="הפעל שירות סינון בהגדרות נגישות" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnEnableAndroid10Vision"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="הפעל סריקת תמונות AI + OCR (לאנדרואיד 10)"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnPrivateDnsGuide"
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="match_parent"

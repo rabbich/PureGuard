@@ -1,10 +1,13 @@
 package com.pureguard.filter.ui
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.ActionMode
@@ -16,8 +19,10 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.pureguard.filter.admin.LockdownManager
 import com.pureguard.filter.ai.NsfwClassifier
@@ -27,7 +32,9 @@ import com.pureguard.filter.data.BlockedKeywordEntity
 import com.pureguard.filter.data.PreferencesManager
 import com.pureguard.filter.data.PureGuardDatabase
 import com.pureguard.filter.databinding.ActivityMainBinding
+import com.pureguard.filter.service.Android10ScreenCapturer
 import com.pureguard.filter.service.FilterAccessibilityService
+import com.pureguard.filter.service.ScreenCaptureKeepAliveService
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -41,6 +48,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var db: PureGuardDatabase
     private lateinit var lockdownManager: LockdownManager
     private val timeFormatter = SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault())
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val serviceIntent = Intent(this, ScreenCaptureKeepAliveService::class.java).apply {
+                putExtra(ScreenCaptureKeepAliveService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(ScreenCaptureKeepAliveService.EXTRA_RESULT_DATA, result.data)
+            }
+            ContextCompat.startForegroundService(this, serviceIntent)
+            Toast.makeText(this, "סריקת תמונות AI ו-OCR הופעלה בהצלחה לאנדרואיד 10! ✅", Toast.LENGTH_LONG).show()
+            refreshServiceAndLockdownStatus()
+        } else {
+            Toast.makeText(this, "יש לאשר לכידת מסך כדי ש-AI יזהה תמונות באנדרואיד 10", Toast.LENGTH_LONG).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +99,14 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnOpenAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            binding.btnEnableAndroid10Vision.visibility = View.VISIBLE
+            binding.btnEnableAndroid10Vision.setOnClickListener {
+                val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
+            }
         }
 
         binding.btnPrivateDnsGuide.setOnClickListener {
@@ -352,7 +383,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.tvModelStatus.text = if (hasModelFile) {
-            "מודל AI מקומי (nsfw.tflite): מותקן וזמין בזיכרון ✅"
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                if (Android10ScreenCapturer.isReady) {
+                    "מודל AI + OCR (אנדרואיד 10): פעיל ודוגם בזיכרון ✅"
+                } else {
+                    "מודל AI + OCR (אנדרואיד 10): לחץ על הכפתור למטה להפעלת לכידת מסך ⚠️"
+                }
+            } else {
+                "מודל AI מקומי (nsfw.tflite) + OCR: מותקן וזמין בזיכרון ✅"
+            }
         } else {
             "מודל AI מקומי (nsfw.tflite): ממתין לקובץ מודל (הגנת טקסט ודומיינים פעילה)"
         }

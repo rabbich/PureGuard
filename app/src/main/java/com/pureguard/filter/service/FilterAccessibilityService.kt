@@ -286,46 +286,67 @@ class FilterAccessibilityService : AccessibilityService() {
         }
         lastScreenshotElapsed = now
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            return
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    screenshotExecutor,
+                    object : TakeScreenshotCallback {
+                        override fun onSuccess(screenshotResult: ScreenshotResult) {
+                            serviceScope.launch(Dispatchers.Default) {
+                                processAndroid11ScreenshotInMemory(pkg, screenshotResult)
+                            }
+                        }
 
-        try {
-            takeScreenshot(
-                Display.DEFAULT_DISPLAY,
-                screenshotExecutor,
-                object : TakeScreenshotCallback {
-                    override fun onSuccess(screenshotResult: ScreenshotResult) {
-                        serviceScope.launch(Dispatchers.Default) {
-                            processScreenshotInMemory(pkg, screenshotResult)
+                        override fun onFailure(errorCode: Int) {
+                            Log.d(TAG, "takeScreenshot skipped/failed with errorCode=$errorCode")
                         }
                     }
-
-                    override fun onFailure(errorCode: Int) {
-                        Log.d(TAG, "takeScreenshot skipped/failed with errorCode=$errorCode")
+                )
+            } catch (e: Throwable) {
+                Log.e(TAG, "Exception requesting screenshot: ${e.message}")
+            }
+        } else {
+            // Android 10 (API 29) support via RAM MediaProjection Capturer
+            if (Android10ScreenCapturer.isReady) {
+                serviceScope.launch(Dispatchers.Default) {
+                    val bitmap = Android10ScreenCapturer.captureLatestBitmap()
+                    if (bitmap != null) {
+                        processSoftwareBitmapInMemory(pkg, bitmap)
                     }
                 }
-            )
-        } catch (e: Throwable) {
-            Log.e(TAG, "Exception requesting screenshot: ${e.message}")
+            } else {
+                showDebugToastIfEnabled("Android 10: לחץ באפליקציה על 'הפעל סריקת תמונות לאנדרואיד 10'")
+            }
         }
     }
 
-    private suspend fun processScreenshotInMemory(pkg: String, screenshotResult: ScreenshotResult) {
+    private suspend fun processAndroid11ScreenshotInMemory(pkg: String, screenshotResult: ScreenshotResult) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-
         val hardwareBuffer = screenshotResult.hardwareBuffer
         val colorSpace = screenshotResult.colorSpace
         var hardwareBitmap: Bitmap? = null
         var softwareBitmap: Bitmap? = null
-
         try {
-            val totalStart = SystemClock.elapsedRealtime()
             hardwareBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
             if (hardwareBitmap == null) return
-
             softwareBitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
-            if (softwareBitmap == null) return
+            if (softwareBitmap != null) {
+                processSoftwareBitmapInMemory(pkg, softwareBitmap)
+            }
+        } finally {
+            try {
+                if (hardwareBitmap != null && !hardwareBitmap.isRecycled) hardwareBitmap.recycle()
+            } catch (_: Throwable) {}
+            try {
+                hardwareBuffer.close()
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private suspend fun processSoftwareBitmapInMemory(pkg: String, softwareBitmap: Bitmap) {
+        try {
+            val totalStart = SystemClock.elapsedRealtime()
 
             // STEP A: On-Device Visual OCR Scan (reads text burned into YouTube Shorts, video overlays, X.com images!)
             val ocrText = ocrScanner?.extractTextFromBitmap(softwareBitmap).orEmpty()
@@ -409,19 +430,9 @@ class FilterAccessibilityService : AccessibilityService() {
             Log.e(TAG, "Error processing in-memory screenshot: ${e.message}")
         } finally {
             try {
-                if (softwareBitmap != null && !softwareBitmap.isRecycled) {
+                if (!softwareBitmap.isRecycled) {
                     softwareBitmap.recycle()
                 }
-            } catch (_: Throwable) {
-            }
-            try {
-                if (hardwareBitmap != null && !hardwareBitmap.isRecycled) {
-                    hardwareBitmap.recycle()
-                }
-            } catch (_: Throwable) {
-            }
-            try {
-                hardwareBuffer.close()
             } catch (_: Throwable) {
             }
         }
