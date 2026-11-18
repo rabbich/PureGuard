@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PureGuard סינון חכם</string>
+    <string name="accessibility_service_label">PureGuard מנוע סינון חכם</string>
+    <string name="accessibility_service_description">מגן מפני תוכן לא ראוי באתרים ואפליקציות תוך שמירה מקסימלית על חיי הסוללה (ללא האטה או התחממות).</string>
+    <string name="device_admin_description">הגנת נעילה אופציונלית של PureGuard (פעילה אך ורק במצב ייצור מלא).</string>
+</resources>
