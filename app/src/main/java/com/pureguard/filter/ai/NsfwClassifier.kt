@@ -26,9 +26,8 @@ data class NsfwResult(
 ) {
     fun isViolation(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): Boolean {
         if (!isModelLoaded) return false
-        // Combined risk score: when both Porn + Sexy are moderately high (e.g. thong/bikini/kissing)
-        val combinedAdultScore = porn + (sexy * 0.85f)
-        val combinedThreshold = sexyThresh * 1.05f
+        val combinedAdultScore = porn + (sexy * 0.90f)
+        val combinedThreshold = sexyThresh
         return porn >= pornThresh ||
             sexy >= sexyThresh ||
             hentai >= hentaiThresh ||
@@ -92,15 +91,10 @@ class NsfwClassifier(private val context: Context) {
     }
 
     /**
-     * Multi-Zone Smart Scanner:
-     * A full tall phone screenshot (e.g. 1080x2400) squished to 224x224 dilutes a YouTube video player
-     * or an image of a girl in a thong/bikini with surrounding white/dark UI chrome.
-     *
-     * We evaluate up to 3 square crops in RAM:
-     * 1. Top video/hero zone (where YouTube plays videos and top search images appear)
-     * 2. Center screen zone (where main feed images/reels appear)
-     * 3. Full screen overview
-     * And return the maximum Porn/Sexy/Hentai scores across zones.
+     * 7-Zone Smart Scanner (Full-Width Zones + 2x2 Grid Quadrants):
+     * Handles both:
+     * A) Fullscreen / single-video layouts (YouTube Shorts, TikTok, Reels, X.com single post)
+     * B) 2x2 Grid thumbnail layouts (like YouTube Shorts search grid where 1 of the 4 tiles has a bikini/thong image!)
      */
     @Synchronized
     fun classifyFullScreenBitmap(
@@ -126,23 +120,34 @@ class NsfwClassifier(private val context: Context) {
 
         val cropsToTest = mutableListOf<Bitmap>()
         try {
-            if (height > width * 1.25f) {
-                val cropSize = width
-                // Zone 1: Top Video Player / Header Image Zone (skip top status bar ~6% of height)
-                val topY = (height * 0.06f).toInt().coerceAtMost(height - cropSize)
-                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, topY, cropSize, cropSize))
+            if (height > width * 1.2f) {
+                val fullW = width
+                // 1. Center main square (catches fullscreen Shorts/Reels/Photos)
+                val centerY = ((height - fullW) / 2).coerceAtLeast(0)
+                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, centerY, fullW, fullW))
 
-                // Zone 2: Center Screen Zone
-                val centerY = ((height - cropSize) / 2).coerceAtLeast(0)
-                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, centerY, cropSize, cropSize))
+                // 2. Top video player square (catches top YouTube video player)
+                val topY = (height * 0.08f).toInt().coerceAtMost(height - fullW)
+                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, topY, fullW, fullW))
 
-                // Zone 3: Lower-Middle Feed Zone
-                val lowerY = (height * 0.48f).toInt().coerceAtMost(height - cropSize)
-                if (lowerY != centerY) {
-                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, lowerY, cropSize, cropSize))
+                // 3-6. Four 2x2 Grid Quadrants (Left-Top, Right-Top, Left-Bottom, Right-Bottom)
+                // Specifically designed to catch a bikini/thong thumbnail in a 4-tile Shorts/X.com/Google Images grid!
+                val halfW = (width / 2).coerceAtLeast(1)
+                val gridTopY = (height * 0.10f).toInt().coerceAtLeast(0)
+                val tileH = ((height * 0.38f).toInt()).coerceAtMost(height - gridTopY)
+                val gridBottomY = (gridTopY + tileH).coerceAtMost(height - tileH)
+
+                if (tileH > 50 && halfW > 50) {
+                    // Top-Left tile
+                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridTopY, halfW, tileH))
+                    // Top-Right tile
+                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridTopY, halfW, tileH))
+                    // Bottom-Left tile
+                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridBottomY, halfW, tileH))
+                    // Bottom-Right tile (e.g. "ONLY FEMZ" red bikini tile in user's screenshot #1!)
+                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridBottomY, halfW, tileH))
                 }
             } else {
-                // Landscape (e.g. fullscreen YouTube video): test center square + full frame
                 val cropSize = height
                 val centerX = ((width - cropSize) / 2).coerceAtLeast(0)
                 cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, centerX, 0, cropSize, cropSize))
@@ -156,7 +161,7 @@ class NsfwClassifier(private val context: Context) {
                 maxPorn = max(maxPorn, scores[3])
                 maxSexy = max(maxSexy, scores[4])
 
-                // Early exit as soon as a zone violates thresholds (saves CPU & battery!)
+                // Early exit immediately if any tile or zone violates threshold!
                 val currentRes = NsfwResult(
                     drawing = maxDrawing,
                     hentai = maxHentai,

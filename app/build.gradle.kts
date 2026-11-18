@@ -12,8 +12,8 @@ android {
         applicationId = "com.pureguard.filter"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0-sandbox"
+        versionCode = 2
+        versionName = "2.0.0-sandbox"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -67,6 +67,9 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 
-    // OkHttp for Layer 3 Gemini Flash Re-Check
+    // Google ML Kit On-Device OCR (reads text inside YouTube Shorts, video overlays, X.com & image watermarks offline)
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+
+    // OkHttp for Layer 3 Free AI Re-Check
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

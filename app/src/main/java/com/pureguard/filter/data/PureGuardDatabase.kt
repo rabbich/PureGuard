@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
         BlockLogEntity::class,
         TemporaryWhitelistEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class PureGuardDatabase : RoomDatabase() {
@@ -49,7 +49,7 @@ abstract class PureGuardDatabase : RoomDatabase() {
                     .build()
                 INSTANCE = instance
                 CoroutineScope(Dispatchers.IO).launch {
-                    if (instance.blockedKeywordsDao().count() < 15) {
+                    if (instance.blockedKeywordsDao().count() < 30) {
                         seedDefaultKeywords(instance)
                     }
                 }
@@ -68,32 +68,46 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "youporn.com", isDomain = true),
                 BlockedKeywordEntity(keyword = "xhamster.com", isDomain = true),
                 BlockedKeywordEntity(keyword = "chaturbate.com", isDomain = true),
+                BlockedKeywordEntity(keyword = "stripchat.com", isDomain = true),
+                BlockedKeywordEntity(keyword = "brazzers.com", isDomain = true),
 
-                // English Keywords (Explicit + Provocative / Kissing / Thong / Bikini)
+                // English Keywords (Explicit + Kissing + Bikini/Thong + YouTube Shorts/X.com triggers)
                 BlockedKeywordEntity(keyword = "porn", isDomain = false),
                 BlockedKeywordEntity(keyword = "xxx", isDomain = false),
                 BlockedKeywordEntity(keyword = "nsfw", isDomain = false),
                 BlockedKeywordEntity(keyword = "hentai", isDomain = false),
                 BlockedKeywordEntity(keyword = "nude", isDomain = false),
+                BlockedKeywordEntity(keyword = "nudegirls", isDomain = false),
                 BlockedKeywordEntity(keyword = "naked", isDomain = false),
                 BlockedKeywordEntity(keyword = "thong", isDomain = false),
                 BlockedKeywordEntity(keyword = "g-string", isDomain = false),
-                BlockedKeywordEntity(keyword = "micro bikini", isDomain = false),
-                BlockedKeywordEntity(keyword = "bikini try on", isDomain = false),
-                BlockedKeywordEntity(keyword = "lingerie haul", isDomain = false),
+                BlockedKeywordEntity(keyword = "bikini", isDomain = false),
+                BlockedKeywordEntity(keyword = "lingerie", isDomain = false),
+                BlockedKeywordEntity(keyword = "underboob", isDomain = false),
+                BlockedKeywordEntity(keyword = "cleavage", isDomain = false),
+                BlockedKeywordEntity(keyword = "tongue kiss", isDomain = false),
+                BlockedKeywordEntity(keyword = "tonguekiss", isDomain = false),
                 BlockedKeywordEntity(keyword = "french kiss", isDomain = false),
                 BlockedKeywordEntity(keyword = "girls kissing", isDomain = false),
-                BlockedKeywordEntity(keyword = "women kissing", isDomain = false),
-                BlockedKeywordEntity(keyword = "lesbian kiss", isDomain = false),
+                BlockedKeywordEntity(keyword = "women kiss", isDomain = false),
+                BlockedKeywordEntity(keyword = "lesbian", isDomain = false),
                 BlockedKeywordEntity(keyword = "making out", isDomain = false),
+                BlockedKeywordEntity(keyword = "make out", isDomain = false),
+                BlockedKeywordEntity(keyword = "only femz", isDomain = false),
+                BlockedKeywordEntity(keyword = "onlyfemz", isDomain = false),
                 BlockedKeywordEntity(keyword = "twerk", isDomain = false),
                 BlockedKeywordEntity(keyword = "boobs", isDomain = false),
+                BlockedKeywordEntity(keyword = "booty", isDomain = false),
                 BlockedKeywordEntity(keyword = "erotic", isDomain = false),
+                BlockedKeywordEntity(keyword = "sensual", isDomain = false),
+                BlockedKeywordEntity(keyword = "stripper", isDomain = false),
+                BlockedKeywordEntity(keyword = "camgirl", isDomain = false),
 
-                // Hebrew Keywords (Explicit + Provocative / Kissing / Thong / Bikini)
+                // Hebrew Keywords (Explicit + Kissing + Bikini/Thong + Immodest)
                 BlockedKeywordEntity(keyword = "פורנו", isDomain = false),
                 BlockedKeywordEntity(keyword = "סרטים כחולים", isDomain = false),
                 BlockedKeywordEntity(keyword = "עירום", isDomain = false),
+                BlockedKeywordEntity(keyword = "עירומות", isDomain = false),
                 BlockedKeywordEntity(keyword = "תוכן למבוגרים", isDomain = false),
                 BlockedKeywordEntity(keyword = "חוטיני", isDomain = false),
                 BlockedKeywordEntity(keyword = "בחוטיני", isDomain = false),
@@ -105,8 +119,10 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "מתנשקים", isDomain = false),
                 BlockedKeywordEntity(keyword = "נשים מתנשקות", isDomain = false),
                 BlockedKeywordEntity(keyword = "בנות מתנשקות", isDomain = false),
+                BlockedKeywordEntity(keyword = "נשיקות בפה", isDomain = false),
                 BlockedKeywordEntity(keyword = "לסביות", isDomain = false),
                 BlockedKeywordEntity(keyword = "אירוטי", isDomain = false),
+                BlockedKeywordEntity(keyword = "סקסיות", isDomain = false),
                 BlockedKeywordEntity(keyword = "זנות", isDomain = false),
                 BlockedKeywordEntity(keyword = "חשפנות", isDomain = false)
             )
