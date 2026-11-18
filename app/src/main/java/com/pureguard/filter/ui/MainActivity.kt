@@ -86,6 +86,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCard1FilterStatus() {
+        binding.switchBlockShorts.isChecked = prefs.blockYoutubeShortsAndReels
+        binding.switchBlockShorts.setOnCheckedChangeListener { _, isChecked ->
+            prefs.blockYoutubeShortsAndReels = isChecked
+        }
+
+        binding.switchEnforceSafeSearch.isChecked = prefs.enforceSafeSearchAndRestrictedMode
+        binding.switchEnforceSafeSearch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.enforceSafeSearchAndRestrictedMode = isChecked
+        }
+
         binding.switchDebugToast.isChecked = prefs.showDebugToast
         binding.switchDebugToast.setOnCheckedChangeListener { _, isChecked ->
             prefs.showDebugToast = isChecked

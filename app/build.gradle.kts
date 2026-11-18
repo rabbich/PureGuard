@@ -72,8 +72,9 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 
-    // Google ML Kit On-Device OCR
+    // Google ML Kit On-Device OCR + Object Detection (detectAndCropObjects like NetSpark!)
     implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.google.mlkit:object-detection:17.0.1")
 
     // OkHttp for Layer 3 Free AI Re-Check
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

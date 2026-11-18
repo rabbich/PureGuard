@@ -4,17 +4,20 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Browser
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import com.pureguard.filter.ai.NsfwClassifier
+import com.pureguard.filter.ai.ObjectAndSkinDetector
 import com.pureguard.filter.ai.ScreenOcrScanner
 import com.pureguard.filter.data.BlockLogEntity
 import com.pureguard.filter.data.BlockedAppEntity
@@ -46,6 +49,7 @@ class FilterAccessibilityService : AccessibilityService() {
     private lateinit var powerManager: PowerManager
     private var nsfwClassifier: NsfwClassifier? = null
     private var ocrScanner: ScreenOcrScanner? = null
+    private var objectAndSkinDetector: ObjectAndSkinDetector? = null
 
     @Volatile
     private var cachedBlockedApps: Set<String> = emptySet()
@@ -80,6 +84,7 @@ class FilterAccessibilityService : AccessibilityService() {
         serviceScope.launch(Dispatchers.IO) {
             nsfwClassifier = NsfwClassifier(applicationContext)
             ocrScanner = ScreenOcrScanner()
+            objectAndSkinDetector = ObjectAndSkinDetector()
         }
 
         // Observe Room DB changes into in-memory caches for <0.5% battery zero-lag checks
@@ -252,6 +257,38 @@ class FilterAccessibilityService : AccessibilityService() {
                 return@launch
             }
 
+            // UPGRADE 1: Block YouTube Shorts & Reels automatically while keeping regular YouTube open
+            val urlLower = extracted.url.lowercase()
+            if (prefs.blockYoutubeShortsAndReels) {
+                val isShortsUrl = urlLower.contains("youtube.com/shorts") ||
+                    urlLower.contains("youtu.be/shorts") ||
+                    urlLower.contains("instagram.com/reels") ||
+                    urlLower.contains("facebook.com/reel")
+                val isYoutubeAppShortsPlayer = (pkg.contains("youtube") && extracted.isShortsPlayerActive)
+
+                if (isShortsUrl || isYoutubeAppShortsPlayer) {
+                    val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                    triggerBlockOverlay(
+                        targetAppOrUrl = urlOrIdentifier,
+                        reason = "נחסם אוטומטית: צפייה ב-YouTube Shorts / Reels חסומה לשמירת העיניים (יוטיוב רגיל פתוח)",
+                        pageTitle = extracted.pageTitle.ifBlank { "YouTube Shorts" },
+                        textSnippet = extracted.visibleText.take(400),
+                        isTextBlock = false,
+                        inferenceTimeMs = elapsedMs,
+                        navigateBack = true
+                    )
+                    return@launch
+                }
+            }
+
+            // UPGRADE 2: Enforce Strict SafeSearch on Google/Bing search URLs in browsers
+            if (prefs.enforceSafeSearchAndRestrictedMode && BROWSER_PACKAGES.contains(pkg)) {
+                if (isUnfilteredSearchEngineUrl(urlLower)) {
+                    enforceSafeSearchRedirectInBrowser(pkg, extracted.url)
+                    return@launch
+                }
+            }
+
             val combinedText = "${extracted.url} ${extracted.pageTitle} ${extracted.visibleText}"
             val matchedKeyword = findMatchingKeyword(combinedText, extracted.url)
             val elapsedMs = SystemClock.elapsedRealtime() - scanStart
@@ -368,7 +405,7 @@ class FilterAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // STEP B: 7-Zone TFLite Visual NSFW Model (Full zones + 4 Grid Quadrants for 2x2 Shorts/Images grids)
+            // STEP B: NetSpark-inspired Object Detection (`detectAndCropObjects`) + Skin Ratio (`skinThreshold`) + 7-Zone TFLite Model
             val classifier = nsfwClassifier
             if (classifier == null || !classifier.isAvailable) {
                 val fallbackElapsed = SystemClock.elapsedRealtime() - totalStart
@@ -376,12 +413,17 @@ class FilterAccessibilityService : AccessibilityService() {
                 return
             }
 
+            val detectedObjectCrops = objectAndSkinDetector?.detectObjectCrops(softwareBitmap) ?: emptyList()
+            val skinRatio = objectAndSkinDetector?.calculateSkinToneRatio(softwareBitmap) ?: 0f
+
             val pornThresh = prefs.pornThreshold
             val sexyThresh = prefs.sexyThreshold
             val hentaiThresh = prefs.hentaiThreshold
 
             val result = classifier.classifyFullScreenBitmap(
                 fullScreenSoftwareBitmap = softwareBitmap,
+                detectedObjectCrops = detectedObjectCrops,
+                skinRatio = skinRatio,
                 pornThresh = pornThresh,
                 sexyThresh = sexyThresh,
                 hentaiThresh = hentaiThresh
@@ -392,7 +434,7 @@ class FilterAccessibilityService : AccessibilityService() {
             val statusLabel = if (isViolation) "BLOCKED" else "Safe"
 
             showDebugToastIfEnabled(
-                "Scan: ${totalElapsed}ms | Porn: ${(result.porn * 100).toInt()}% | Sexy: ${(result.sexy * 100).toInt()}% | $statusLabel"
+                "Scan: ${totalElapsed}ms | Porn: ${(result.porn * 100).toInt()}% | Sexy: ${(result.sexy * 100).toInt()}% | Skin: ${(skinRatio * 100).toInt()}% | $statusLabel"
             )
 
             if (isViolation) {
@@ -489,15 +531,56 @@ class FilterAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun isUnfilteredSearchEngineUrl(urlLower: String): Boolean {
+        val isGoogleSearch = (urlLower.contains("google.com/search") || urlLower.contains("google.co.il/search")) &&
+            !urlLower.contains("safe=active")
+        val isBingSearch = urlLower.contains("bing.com/search") && !urlLower.contains("adlt=strict")
+        return isGoogleSearch || isBingSearch
+    }
+
+    private fun enforceSafeSearchRedirectInBrowser(browserPkg: String, rawUrl: String) {
+        try {
+            val fixedUrl = buildString {
+                if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+                    append("https://")
+                }
+                append(rawUrl)
+                if (rawUrl.contains("?")) {
+                    if (rawUrl.contains("google.")) append("&safe=active")
+                    else if (rawUrl.contains("bing.com")) append("&adlt=strict")
+                } else {
+                    if (rawUrl.contains("google.")) append("?safe=active")
+                    else if (rawUrl.contains("bing.com")) append("?adlt=strict")
+                }
+            }
+
+            mainHandler.post {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(fixedUrl)).apply {
+                        setPackage(browserPkg)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        putExtra(Browser.EXTRA_APPLICATION_ID, browserPkg)
+                    }
+                    startActivity(intent)
+                    showDebugToastIfEnabled("SafeSearch: הופעל חיפוש בטוח אוטומטית 🛡️")
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     private data class ScreenExtractedContent(
         val url: String,
         val pageTitle: String,
-        val visibleText: String
+        val visibleText: String,
+        val isShortsPlayerActive: Boolean = false
     )
 
     private fun extractScreenContent(root: AccessibilityNodeInfo, pkg: String): ScreenExtractedContent {
         var detectedUrl = ""
         var detectedTitle = ""
+        var isShortsActive = false
         val textBuilder = StringBuilder()
 
         val urlViewIds = URL_BAR_VIEW_IDS[pkg] ?: DEFAULT_URL_BAR_IDS
@@ -521,11 +604,33 @@ class FilterAccessibilityService : AccessibilityService() {
             if (detectedUrl.isNotEmpty()) break
         }
 
+        // Detect YouTube app Shorts player view IDs
+        if (pkg.contains("youtube")) {
+            for (shortsId in YOUTUBE_SHORTS_VIEW_IDS) {
+                val nodes = root.findAccessibilityNodeInfosByViewId(shortsId)
+                if (!nodes.isNullOrEmpty()) {
+                    isShortsActive = true
+                    nodes.forEach {
+                        try {
+                            it.recycle()
+                        } catch (_: Exception) {
+                        }
+                    }
+                    break
+                }
+            }
+        }
+
         // Deep DOM traversal up to 650 nodes (including non-visible-flagged WebView DOM children in Chrome YouTube Shorts & X.com!)
         var visitedCount = 0
         fun traverse(node: AccessibilityNodeInfo?) {
             if (node == null || visitedCount > 650) return
             visitedCount++
+
+            val viewIdRes = node.viewIdResourceName.orEmpty()
+            if (viewIdRes.contains("reel_player") || viewIdRes.contains("shorts_player")) {
+                isShortsActive = true
+            }
 
             val nodeText = node.text?.toString()?.trim().orEmpty()
             val contentDesc = node.contentDescription?.toString()?.trim().orEmpty()
@@ -566,7 +671,8 @@ class FilterAccessibilityService : AccessibilityService() {
         return ScreenExtractedContent(
             url = detectedUrl,
             pageTitle = detectedTitle,
-            visibleText = textBuilder.toString().trim()
+            visibleText = textBuilder.toString().trim(),
+            isShortsPlayerActive = isShortsActive
         )
     }
 
@@ -590,6 +696,7 @@ class FilterAccessibilityService : AccessibilityService() {
         screenshotExecutor.shutdownNow()
         nsfwClassifier?.close()
         ocrScanner?.close()
+        objectAndSkinDetector?.close()
     }
 
     companion object {
@@ -598,6 +705,23 @@ class FilterAccessibilityService : AccessibilityService() {
         private const val TEXT_SCAN_THROTTLE_MS = 350L
         private const val DEBOUNCE_VISUAL_SCAN_MS = 650L
         private const val HARD_SCREENSHOT_COOLDOWN_MS = 1800L
+
+        val BROWSER_PACKAGES = setOf(
+            "com.android.chrome",
+            "org.mozilla.firefox",
+            "com.sec.android.app.sbrowser",
+            "com.mi.globalbrowser",
+            "com.brave.browser",
+            "com.microsoft.emmx",
+            "com.opera.browser",
+            "com.duckduckgo.mobile.android"
+        )
+
+        private val YOUTUBE_SHORTS_VIEW_IDS = listOf(
+            "com.google.android.youtube:id/reel_player_page_container",
+            "com.google.android.youtube:id/reel_recycler",
+            "com.google.android.youtube:id/reel_watch_Fragment_root"
+        )
 
         val WHITELIST_SAFE_PACKAGES = setOf(
             "com.whatsapp",

@@ -17,6 +17,14 @@ class PreferencesManager(context: Context) {
         get() = prefs.getBoolean(KEY_LOCKDOWN_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_LOCKDOWN_ENABLED, value).apply()
 
+    var blockYoutubeShortsAndReels: Boolean
+        get() = prefs.getBoolean(KEY_BLOCK_SHORTS_REELS, true)
+        set(value) = prefs.edit().putBoolean(KEY_BLOCK_SHORTS_REELS, value).apply()
+
+    var enforceSafeSearchAndRestrictedMode: Boolean
+        get() = prefs.getBoolean(KEY_ENFORCE_SAFESEARCH, true)
+        set(value) = prefs.edit().putBoolean(KEY_ENFORCE_SAFESEARCH, value).apply()
+
     var showDebugToast: Boolean
         get() = prefs.getBoolean(KEY_SHOW_DEBUG_TOAST, true)
         set(value) = prefs.edit().putBoolean(KEY_SHOW_DEBUG_TOAST, value).apply()
@@ -44,6 +52,8 @@ class PreferencesManager(context: Context) {
     companion object {
         private const val PREFS_NAME = "pureguard_prefs"
         private const val KEY_LOCKDOWN_ENABLED = "is_lockdown_enabled"
+        private const val KEY_BLOCK_SHORTS_REELS = "block_youtube_shorts_and_reels"
+        private const val KEY_ENFORCE_SAFESEARCH = "enforce_safesearch_restricted"
         private const val KEY_SHOW_DEBUG_TOAST = "show_debug_toast"
         private const val KEY_PORN_THRESHOLD = "porn_threshold"
         private const val KEY_SEXY_THRESHOLD = "sexy_threshold"

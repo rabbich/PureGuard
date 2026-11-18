@@ -19,10 +19,6 @@ if not exist "%APK%" (
 )
 
 echo [1/4] Checking USB connection to phone...
-echo IMPORTANT: Please look at your phone screen right now!
-echo If a popup asks "Allow USB debugging?", check "Always allow" and tap ALLOW / OK.
-echo.
-
 "%ADB%" start-server >nul 2>&1
 
 :WAIT_LOOP
@@ -34,14 +30,20 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo [2/4] Phone connected and authorized! Installing PureGuard APK...
+echo [2/4] Phone connected! Removing old version and installing latest PureGuard APK...
+"%ADB%" uninstall com.pureguard.filter >nul 2>&1
 "%ADB%" install -r -t "%APK%"
 if %ERRORLEVEL% NEQ 0 (
     color 0C
     echo.
-    echo [ERROR] Installation failed. Make sure "Install via USB" is allowed on your phone.
-    pause
-    exit /b 1
+    echo [ERROR] Installation failed. Freeing temporary app cache and retrying...
+    "%ADB%" shell pm trim-caches 999999999999999999 >nul 2>&1
+    "%ADB%" install -r -t "%APK%"
+    if %ERRORLEVEL% NEQ 0 (
+        echo [ERROR] Still failed. Check phone screen.
+        pause
+        exit /b 1
+    )
 )
 
 echo.

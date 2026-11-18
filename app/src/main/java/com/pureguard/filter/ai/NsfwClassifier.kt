@@ -21,28 +21,37 @@ data class NsfwResult(
     val neutral: Float,
     val porn: Float,
     val sexy: Float,
+    val skinRatio: Float = 0f,
     val inferenceTimeMs: Long,
     val isModelLoaded: Boolean
 ) {
     fun isViolation(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): Boolean {
         if (!isModelLoaded) return false
         val combinedAdultScore = porn + (sexy * 0.90f)
-        val combinedThreshold = sexyThresh
+        // NetSpark-style fusion: if skinRatio is very high (>42% of frame is exposed skin/close-up)
+        // and the AI sees even moderate Sexy/Porn signal, trigger block!
+        val skinBoostedScore = if (skinRatio >= 0.42f) {
+            porn + sexy + (skinRatio * 0.35f)
+        } else {
+            combinedAdultScore
+        }
         return porn >= pornThresh ||
             sexy >= sexyThresh ||
             hentai >= hentaiThresh ||
-            combinedAdultScore >= combinedThreshold
+            combinedAdultScore >= sexyThresh ||
+            skinBoostedScore >= sexyThresh
     }
 
     fun formatReason(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): String {
         val pornPct = (porn * 100).toInt()
         val sexyPct = (sexy * 100).toInt()
         val hentaiPct = (hentai * 100).toInt()
+        val skinPct = (skinRatio * 100).toInt()
         return when {
             porn >= pornThresh -> "נחסם עקב זיהוי תמונה לא ראויה (Porn: $pornPct%, Sexy: $sexyPct%)"
             sexy >= sexyThresh -> "נחסם עקב זיהוי תמונה חשופה (Sexy: $sexyPct%, Porn: $pornPct%)"
             hentai >= hentaiThresh -> "נחסם עקב זיהוי איור לא ראוי (Hentai: $hentaiPct%)"
-            else -> "נחסם עקב זיהוי תוכן ויזואלי חשוף (Sexy: $sexyPct%, Porn: $pornPct%)"
+            else -> "נחסם עקב זיהוי חשיפת עור ותוכן ויזואלי (Sexy: $sexyPct%, Skin: $skinPct%)"
         }
     }
 }
@@ -99,13 +108,15 @@ class NsfwClassifier(private val context: Context) {
     @Synchronized
     fun classifyFullScreenBitmap(
         fullScreenSoftwareBitmap: Bitmap,
+        detectedObjectCrops: List<Bitmap>,
+        skinRatio: Float,
         pornThresh: Float,
         sexyThresh: Float,
         hentaiThresh: Float
     ): NsfwResult {
         val currentInterpreter = interpreter
         if (!isAvailable || currentInterpreter == null) {
-            return NsfwResult(0f, 0f, 1f, 0f, 0f, 0L, isModelLoaded = false)
+            return NsfwResult(0f, 0f, 1f, 0f, 0f, skinRatio, 0L, isModelLoaded = false)
         }
 
         val startTime = SystemClock.elapsedRealtime()
@@ -120,31 +131,29 @@ class NsfwClassifier(private val context: Context) {
 
         val cropsToTest = mutableListOf<Bitmap>()
         try {
+            // Priority 1: Exact object bounding boxes detected by ML Kit ObjectDetector (NetSpark detectAndCropObjects!)
+            cropsToTest.addAll(detectedObjectCrops)
+
             if (height > width * 1.2f) {
                 val fullW = width
-                // 1. Center main square (catches fullscreen Shorts/Reels/Photos)
+                // Priority 2: Center main square (catches fullscreen Shorts/Reels/Photos)
                 val centerY = ((height - fullW) / 2).coerceAtLeast(0)
                 cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, centerY, fullW, fullW))
 
-                // 2. Top video player square (catches top YouTube video player)
+                // Priority 3: Top video player square (catches top YouTube video player)
                 val topY = (height * 0.08f).toInt().coerceAtMost(height - fullW)
                 cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, topY, fullW, fullW))
 
-                // 3-6. Four 2x2 Grid Quadrants (Left-Top, Right-Top, Left-Bottom, Right-Bottom)
-                // Specifically designed to catch a bikini/thong thumbnail in a 4-tile Shorts/X.com/Google Images grid!
+                // Priority 4: Four 2x2 Grid Quadrants (Left-Top, Right-Top, Left-Bottom, Right-Bottom)
                 val halfW = (width / 2).coerceAtLeast(1)
                 val gridTopY = (height * 0.10f).toInt().coerceAtLeast(0)
                 val tileH = ((height * 0.38f).toInt()).coerceAtMost(height - gridTopY)
                 val gridBottomY = (gridTopY + tileH).coerceAtMost(height - tileH)
 
                 if (tileH > 50 && halfW > 50) {
-                    // Top-Left tile
                     cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridTopY, halfW, tileH))
-                    // Top-Right tile
                     cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridTopY, halfW, tileH))
-                    // Bottom-Left tile
                     cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridBottomY, halfW, tileH))
-                    // Bottom-Right tile (e.g. "ONLY FEMZ" red bikini tile in user's screenshot #1!)
                     cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridBottomY, halfW, tileH))
                 }
             } else {
@@ -161,13 +170,13 @@ class NsfwClassifier(private val context: Context) {
                 maxPorn = max(maxPorn, scores[3])
                 maxSexy = max(maxSexy, scores[4])
 
-                // Early exit immediately if any tile or zone violates threshold!
                 val currentRes = NsfwResult(
                     drawing = maxDrawing,
                     hentai = maxHentai,
                     neutral = maxNeutral,
                     porn = maxPorn,
                     sexy = maxSexy,
+                    skinRatio = skinRatio,
                     inferenceTimeMs = SystemClock.elapsedRealtime() - startTime,
                     isModelLoaded = true
                 )
@@ -183,13 +192,14 @@ class NsfwClassifier(private val context: Context) {
                 neutral = maxNeutral,
                 porn = maxPorn,
                 sexy = maxSexy,
+                skinRatio = skinRatio,
                 inferenceTimeMs = elapsed,
                 isModelLoaded = true
             )
         } catch (e: Throwable) {
             Log.e(TAG, "Error during multi-zone TFLite inference: ${e.message}")
             val elapsed = SystemClock.elapsedRealtime() - startTime
-            return NsfwResult(0f, 0f, 1f, 0f, 0f, elapsed, isModelLoaded = false)
+            return NsfwResult(0f, 0f, 1f, 0f, 0f, skinRatio, elapsed, isModelLoaded = false)
         } finally {
             for (crop in cropsToTest) {
                 try {

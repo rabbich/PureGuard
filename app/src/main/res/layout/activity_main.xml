@@ -107,10 +107,28 @@
                     android:text="הגדרת DNS פרטי (family.cloudflare-dns.com)" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchDebugToast"
+                    android:id="@+id/switchBlockShorts"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
+                    android:checked="true"
+                    android:text="חסום YouTube Shorts ו-Reels אוטומטית (יוטיוב רגיל פתוח)"
+                    android:textSize="14sp" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchEnforceSafeSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:checked="true"
+                    android:text="אכוף חיפוש בטוח (Strict SafeSearch) בגוגל ובבינג"
+                    android:textSize="14sp" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchDebugToast"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
                     android:checked="true"
                     android:text="הצג חיווי בדיקות צף (Debug Toast)"
                     android:textSize="14sp" />
