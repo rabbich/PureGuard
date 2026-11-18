@@ -121,7 +121,16 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:checked="true"
-                    android:text="אכוף חיפוש בטוח (Strict SafeSearch) בגוגל ובבינג"
+                    android:text="גוגל חיפוש בטוח בלבד (חסום DuckDuckGo, יאנדקס, בינג וכו')"
+                    android:textSize="14sp" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchBlockGrokAi"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:checked="true"
+                    android:text="חסום את Grok ומחוללי תמונות/צ'אט AI ללא צנזורה"
                     android:textSize="14sp" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch

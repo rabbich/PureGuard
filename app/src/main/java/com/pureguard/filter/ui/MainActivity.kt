@@ -96,6 +96,11 @@ class MainActivity : AppCompatActivity() {
             prefs.enforceSafeSearchAndRestrictedMode = isChecked
         }
 
+        binding.switchBlockGrokAi.isChecked = prefs.blockUncensoredAiAndGrok
+        binding.switchBlockGrokAi.setOnCheckedChangeListener { _, isChecked ->
+            prefs.blockUncensoredAiAndGrok = isChecked
+        }
+
         binding.switchDebugToast.isChecked = prefs.showDebugToast
         binding.switchDebugToast.setOnCheckedChangeListener { _, isChecked ->
             prefs.showDebugToast = isChecked

@@ -150,6 +150,34 @@ class FilterAccessibilityService : AccessibilityService() {
             return
         }
 
+        // Block alternative search engine apps (DuckDuckGo, Yandex, Bing) when Google-only SafeSearch is active
+        if (prefs.enforceSafeSearchAndRestrictedMode && BLOCKED_SEARCH_ENGINE_PACKAGES.contains(pkg)) {
+            triggerBlockOverlay(
+                targetAppOrUrl = pkg,
+                reason = "נחסם: מותר שימוש במנוע החיפוש של גוגל בלבד (עם חיפוש בטוח SafeSearch)",
+                pageTitle = pkg,
+                textSnippet = "",
+                isTextBlock = false,
+                inferenceTimeMs = 0L,
+                navigateBack = true
+            )
+            return
+        }
+
+        // Block Grok & Uncensored AI generator apps (Grok, CrushOn, Chai, JanitorAI, etc.)
+        if (prefs.blockUncensoredAiAndGrok && BLOCKED_UNCENSORED_AI_PACKAGES.contains(pkg)) {
+            triggerBlockOverlay(
+                targetAppOrUrl = pkg,
+                reason = "נחסם: אפליקציית AI ללא סינון צניעות (Grok / Uncensored AI) חסומה לשמירת העיניים",
+                pageTitle = pkg,
+                textSnippet = "",
+                isTextBlock = false,
+                inferenceTimeMs = 0L,
+                navigateBack = true
+            )
+            return
+        }
+
         // Also check the direct event text/contentDescription immediately (catches fast web/video titles)
         if (isMonitoredContentPackage(pkg)) {
             val eventImmediateText = buildString {
@@ -281,10 +309,43 @@ class FilterAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // UPGRADE 2: Enforce Strict SafeSearch on Google/Bing search URLs in browsers
-            if (prefs.enforceSafeSearchAndRestrictedMode && BROWSER_PACKAGES.contains(pkg)) {
-                if (isUnfilteredSearchEngineUrl(urlLower)) {
+            // UPGRADE 2: Google-Only Search Engine Policy + Strict SafeSearch Enforcement
+            if (prefs.enforceSafeSearchAndRestrictedMode) {
+                val blockedSearchDomain = findBlockedAlternativeSearchEngine(urlLower)
+                if (blockedSearchDomain != null) {
+                    val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                    triggerBlockOverlay(
+                        targetAppOrUrl = urlOrIdentifier,
+                        reason = "נחסם ($blockedSearchDomain): מותר שימוש במנוע החיפוש של גוגל בלבד (עם חיפוש בטוח)",
+                        pageTitle = blockedSearchDomain,
+                        textSnippet = "",
+                        isTextBlock = false,
+                        inferenceTimeMs = elapsedMs,
+                        navigateBack = true
+                    )
+                    return@launch
+                }
+
+                if (BROWSER_PACKAGES.contains(pkg) && isUnfilteredGoogleSearchUrl(urlLower)) {
                     enforceSafeSearchRedirectInBrowser(pkg, extracted.url)
+                    return@launch
+                }
+            }
+
+            // UPGRADE 3: Block Grok (grok.com, x.com/i/grok, Grok tab inside X app) & Uncensored NSFW AI Generators
+            if (prefs.blockUncensoredAiAndGrok) {
+                val blockedAiSite = findBlockedUncensoredAiSite(urlLower, pkg, extracted)
+                if (blockedAiSite != null) {
+                    val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                    triggerBlockOverlay(
+                        targetAppOrUrl = urlOrIdentifier,
+                        reason = "נחסם ($blockedAiSite): מחולל AI ללא צנזורה (Grok / Uncensored AI) חסום לשמירת העיניים",
+                        pageTitle = blockedAiSite,
+                        textSnippet = "",
+                        isTextBlock = false,
+                        inferenceTimeMs = elapsedMs,
+                        navigateBack = true
+                    )
                     return@launch
                 }
             }
@@ -531,11 +592,55 @@ class FilterAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isUnfilteredSearchEngineUrl(urlLower: String): Boolean {
-        val isGoogleSearch = (urlLower.contains("google.com/search") || urlLower.contains("google.co.il/search")) &&
+    private fun isUnfilteredGoogleSearchUrl(urlLower: String): Boolean {
+        return (urlLower.contains("google.com/search") || urlLower.contains("google.co.il/search")) &&
             !urlLower.contains("safe=active")
-        val isBingSearch = urlLower.contains("bing.com/search") && !urlLower.contains("adlt=strict")
-        return isGoogleSearch || isBingSearch
+    }
+
+    private fun findBlockedAlternativeSearchEngine(urlLower: String): String? {
+        if (urlLower.isBlank()) return null
+        for (engine in BLOCKED_ALTERNATIVE_SEARCH_DOMAINS) {
+            if (urlLower == engine ||
+                urlLower.startsWith("$engine/") ||
+                urlLower.startsWith("https://$engine") ||
+                urlLower.startsWith("http://$engine") ||
+                urlLower.startsWith("www.$engine") ||
+                urlLower.contains(".$engine/") ||
+                urlLower.contains("://$engine")
+            ) {
+                return engine
+            }
+        }
+        return null
+    }
+
+    private fun findBlockedUncensoredAiSite(
+        urlLower: String,
+        pkg: String,
+        extracted: ScreenExtractedContent
+    ): String? {
+        // 1. Direct URL check for Grok & Uncensored AI websites
+        if (urlLower.isNotBlank()) {
+            for (domain in BLOCKED_UNCENSORED_AI_DOMAINS) {
+                if (urlLower.contains(domain)) {
+                    return domain
+                }
+            }
+        }
+
+        // 2. Inside X / Twitter app or web: check if user opened the embedded Grok tab/chat
+        if (pkg == "com.twitter.android" || urlLower.contains("x.com") || urlLower.contains("twitter.com")) {
+            val titleAndText = "${extracted.pageTitle} ${extracted.visibleText}".lowercase()
+            if (titleAndText.contains("ask grok") ||
+                titleAndText.contains("grok 2") ||
+                titleAndText.contains("grok 3") ||
+                titleAndText.contains("x.com/i/grok") ||
+                extracted.pageTitle.trim().equals("grok", ignoreCase = true)
+            ) {
+                return "Grok AI (X.com)"
+            }
+        }
+        return null
     }
 
     private fun enforceSafeSearchRedirectInBrowser(browserPkg: String, rawUrl: String) {
@@ -546,11 +651,9 @@ class FilterAccessibilityService : AccessibilityService() {
                 }
                 append(rawUrl)
                 if (rawUrl.contains("?")) {
-                    if (rawUrl.contains("google.")) append("&safe=active")
-                    else if (rawUrl.contains("bing.com")) append("&adlt=strict")
+                    append("&safe=active")
                 } else {
-                    if (rawUrl.contains("google.")) append("?safe=active")
-                    else if (rawUrl.contains("bing.com")) append("?adlt=strict")
+                    append("?safe=active")
                 }
             }
 
@@ -721,6 +824,82 @@ class FilterAccessibilityService : AccessibilityService() {
             "com.google.android.youtube:id/reel_player_page_container",
             "com.google.android.youtube:id/reel_recycler",
             "com.google.android.youtube:id/reel_watch_Fragment_root"
+        )
+
+        val BLOCKED_ALTERNATIVE_SEARCH_DOMAINS = listOf(
+            "duckduckgo.com",
+            "yandex.com",
+            "yandex.ru",
+            "ya.ru",
+            "bing.com",
+            "search.yahoo.com",
+            "yahoo.com",
+            "search.brave.com",
+            "ecosia.org",
+            "qwant.com",
+            "startpage.com",
+            "baidu.com",
+            "ask.com",
+            "aol.com",
+            "dogpile.com",
+            "metacrawler.com",
+            "swisscows.com",
+            "mojeek.com",
+            "searx.be",
+            "you.com"
+        )
+
+        val BLOCKED_SEARCH_ENGINE_PACKAGES = setOf(
+            "com.duckduckgo.mobile.android",
+            "com.yandex.browser",
+            "ru.yandex.searchplugin",
+            "com.microsoft.bing",
+            "com.yahoo.mobile.client.android.search",
+            "com.ecosia.android"
+        )
+
+        val BLOCKED_UNCENSORED_AI_DOMAINS = listOf(
+            "grok.com",
+            "x.com/i/grok",
+            "twitter.com/i/grok",
+            "x.ai",
+            "civitai.com",
+            "janitorai.com",
+            "crushon.ai",
+            "spicychat.ai",
+            "chub.ai",
+            "venus.chub.ai",
+            "character.ai",
+            "beta.character.ai",
+            "joyland.ai",
+            "candy.ai",
+            "dreamgf.ai",
+            "Promptchan.ai",
+            "promptchan.ai",
+            "seduced.ai",
+            "unfilteredai.com",
+            "perchance.org",
+            "seaart.ai",
+            "tensor.art",
+            "yodayo.com",
+            "sakura.fm",
+            "pephop.ai",
+            "muah.ai",
+            "kupid.ai",
+            "soulgen.net",
+            "pornpen.ai",
+            "undress.ai"
+        )
+
+        val BLOCKED_UNCENSORED_AI_PACKAGES = setOf(
+            "ai.x.grok",
+            "ai.character.app",
+            "com.chai.app",
+            "ai.replika.app",
+            "com.crushon.ai",
+            "com.seaart.ai",
+            "com.polyai.app",
+            "com.talkie.ai"
         )
 
         val WHITELIST_SAFE_PACKAGES = setOf(
