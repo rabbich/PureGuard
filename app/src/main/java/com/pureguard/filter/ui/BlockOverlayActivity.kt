@@ -71,7 +71,7 @@ class BlockOverlayActivity : AppCompatActivity() {
         binding.btnSandboxBypass.visibility = if (!prefs.isLockdownEnabled) View.VISIBLE else View.GONE
 
         binding.btnAiReCheck.setOnClickListener {
-            performGeminiReCheck()
+            performFreeAiReCheck()
         }
 
         binding.btnSandboxBypass.setOnClickListener {
@@ -99,19 +99,13 @@ class BlockOverlayActivity : AppCompatActivity() {
         }
     }
 
-    private fun performGeminiReCheck() {
+    private fun performFreeAiReCheck() {
         val apiKey = prefs.geminiApiKey
-        if (apiKey.isBlank()) {
-            binding.tvAiRecheckStatus.visibility = View.VISIBLE
-            binding.tvAiRecheckStatus.text =
-                "לא הוגדר מפתח Gemini API במסך הראשי של PureGuard. הזן מפתח כדי לבצע בדיקת הקשר חכמה."
-            return
-        }
 
         binding.btnAiReCheck.isEnabled = false
         binding.progressAiRecheck.visibility = View.VISIBLE
         binding.tvAiRecheckStatus.visibility = View.VISIBLE
-        binding.tvAiRecheckStatus.text = "מבצע בדיקת הקשר חכמה מול Gemini Flash..."
+        binding.tvAiRecheckStatus.text = "מבצע בדיקת הקשר חכמה וחינמית (AI)..."
 
         lifecycleScope.launch {
             val eval = geminiClient.evaluateContext(

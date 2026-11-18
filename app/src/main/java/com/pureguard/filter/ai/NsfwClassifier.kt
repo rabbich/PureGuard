@@ -13,6 +13,7 @@ import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.max
 
 data class NsfwResult(
     val drawing: Float,
@@ -25,15 +26,24 @@ data class NsfwResult(
 ) {
     fun isViolation(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): Boolean {
         if (!isModelLoaded) return false
-        return porn >= pornThresh || sexy >= sexyThresh || hentai >= hentaiThresh
+        // Combined risk score: when both Porn + Sexy are moderately high (e.g. thong/bikini/kissing)
+        val combinedAdultScore = porn + (sexy * 0.85f)
+        val combinedThreshold = sexyThresh * 1.05f
+        return porn >= pornThresh ||
+            sexy >= sexyThresh ||
+            hentai >= hentaiThresh ||
+            combinedAdultScore >= combinedThreshold
     }
 
     fun formatReason(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): String {
+        val pornPct = (porn * 100).toInt()
+        val sexyPct = (sexy * 100).toInt()
+        val hentaiPct = (hentai * 100).toInt()
         return when {
-            porn >= pornThresh -> "נחסם עקב זיהוי תמונה לא ראויה (Porn: ${(porn * 100).toInt()}%)"
-            sexy >= sexyThresh -> "נחסם עקב זיהוי תמונה לא ראויה (Sexy: ${(sexy * 100).toInt()}%)"
-            hentai >= hentaiThresh -> "נחסם עקב זיהוי תמונה לא ראויה (Hentai: ${(hentai * 100).toInt()}%)"
-            else -> "בדיקת תמונה תקינה"
+            porn >= pornThresh -> "נחסם עקב זיהוי תמונה לא ראויה (Porn: $pornPct%, Sexy: $sexyPct%)"
+            sexy >= sexyThresh -> "נחסם עקב זיהוי תמונה חשופה (Sexy: $sexyPct%, Porn: $pornPct%)"
+            hentai >= hentaiThresh -> "נחסם עקב זיהוי איור לא ראוי (Hentai: $hentaiPct%)"
+            else -> "נחסם עקב זיהוי תוכן ויזואלי חשוף (Sexy: $sexyPct%, Porn: $pornPct%)"
         }
     }
 }
@@ -67,13 +77,13 @@ class NsfwClassifier(private val context: Context) {
             }
 
             val options = Interpreter.Options().apply {
-                setNumThreads(2)
+                setNumThreads(3)
             }
             val tflite = Interpreter(modelBuffer, options)
             inputDataType = tflite.getInputTensor(0).dataType()
             interpreter = tflite
             isAvailable = true
-            Log.i(TAG, "NSFW TFLite model loaded successfully (Input type: $inputDataType)")
+            Log.i(TAG, "NSFW TFLite model loaded successfully (Size: ${modelBuffer.capacity()} bytes, Input type: $inputDataType)")
         } catch (e: Throwable) {
             Log.e(TAG, "Graceful fallback: Failed to load $MODEL_FILE: ${e.message}")
             interpreter = null
@@ -81,79 +91,144 @@ class NsfwClassifier(private val context: Context) {
         }
     }
 
+    /**
+     * Multi-Zone Smart Scanner:
+     * A full tall phone screenshot (e.g. 1080x2400) squished to 224x224 dilutes a YouTube video player
+     * or an image of a girl in a thong/bikini with surrounding white/dark UI chrome.
+     *
+     * We evaluate up to 3 square crops in RAM:
+     * 1. Top video/hero zone (where YouTube plays videos and top search images appear)
+     * 2. Center screen zone (where main feed images/reels appear)
+     * 3. Full screen overview
+     * And return the maximum Porn/Sexy/Hentai scores across zones.
+     */
     @Synchronized
-    fun classify(bitmap224: Bitmap): NsfwResult {
+    fun classifyFullScreenBitmap(
+        fullScreenSoftwareBitmap: Bitmap,
+        pornThresh: Float,
+        sexyThresh: Float,
+        hentaiThresh: Float
+    ): NsfwResult {
         val currentInterpreter = interpreter
         if (!isAvailable || currentInterpreter == null) {
-            return NsfwResult(
-                drawing = 0f,
-                hentai = 0f,
-                neutral = 1f,
-                porn = 0f,
-                sexy = 0f,
-                inferenceTimeMs = 0L,
-                isModelLoaded = false
-            )
+            return NsfwResult(0f, 0f, 1f, 0f, 0f, 0L, isModelLoaded = false)
         }
 
         val startTime = SystemClock.elapsedRealtime()
-        return try {
-            val imageProcessorBuilder = ImageProcessor.Builder()
-                .add(ResizeOp(INPUT_SIZE, INPUT_SIZE, ResizeOp.ResizeMethod.BILINEAR))
+        val width = fullScreenSoftwareBitmap.width
+        val height = fullScreenSoftwareBitmap.height
 
-            if (inputDataType == DataType.FLOAT32) {
-                // Standard MobileNetV2 normalization [0, 1]
-                imageProcessorBuilder.add(NormalizeOp(0f, 255f))
-            }
+        var maxDrawing = 0f
+        var maxHentai = 0f
+        var maxNeutral = 1f
+        var maxPorn = 0f
+        var maxSexy = 0f
 
-            val imageProcessor = imageProcessorBuilder.build()
-            var tensorImage = TensorImage(inputDataType)
-            tensorImage.load(bitmap224)
-            tensorImage = imageProcessor.process(tensorImage)
+        val cropsToTest = mutableListOf<Bitmap>()
+        try {
+            if (height > width * 1.25f) {
+                val cropSize = width
+                // Zone 1: Top Video Player / Header Image Zone (skip top status bar ~6% of height)
+                val topY = (height * 0.06f).toInt().coerceAtMost(height - cropSize)
+                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, topY, cropSize, cropSize))
 
-            val outputTensor = currentInterpreter.getOutputTensor(0)
-            val outputType = outputTensor.dataType()
+                // Zone 2: Center Screen Zone
+                val centerY = ((height - cropSize) / 2).coerceAtLeast(0)
+                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, centerY, cropSize, cropSize))
 
-            val probs = FloatArray(5)
-            if (outputType == DataType.UINT8) {
-                val outBuffer = ByteBuffer.allocateDirect(5).order(ByteOrder.nativeOrder())
-                currentInterpreter.run(tensorImage.buffer, outBuffer)
-                outBuffer.rewind()
-                for (i in 0 until 5) {
-                    probs[i] = (outBuffer.get().toInt() and 0xFF) / 255.0f
+                // Zone 3: Lower-Middle Feed Zone
+                val lowerY = (height * 0.48f).toInt().coerceAtMost(height - cropSize)
+                if (lowerY != centerY) {
+                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, lowerY, cropSize, cropSize))
                 }
             } else {
-                val outputArray = Array(1) { FloatArray(5) }
-                currentInterpreter.run(tensorImage.buffer, outputArray)
-                for (i in 0 until 5) {
-                    probs[i] = outputArray[0][i]
+                // Landscape (e.g. fullscreen YouTube video): test center square + full frame
+                val cropSize = height
+                val centerX = ((width - cropSize) / 2).coerceAtLeast(0)
+                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, centerX, 0, cropSize, cropSize))
+            }
+
+            for (crop in cropsToTest) {
+                val scores = runSingleInference(currentInterpreter, crop)
+                maxDrawing = max(maxDrawing, scores[0])
+                maxHentai = max(maxHentai, scores[1])
+                maxNeutral = scores[2]
+                maxPorn = max(maxPorn, scores[3])
+                maxSexy = max(maxSexy, scores[4])
+
+                // Early exit as soon as a zone violates thresholds (saves CPU & battery!)
+                val currentRes = NsfwResult(
+                    drawing = maxDrawing,
+                    hentai = maxHentai,
+                    neutral = maxNeutral,
+                    porn = maxPorn,
+                    sexy = maxSexy,
+                    inferenceTimeMs = SystemClock.elapsedRealtime() - startTime,
+                    isModelLoaded = true
+                )
+                if (currentRes.isViolation(pornThresh, sexyThresh, hentaiThresh)) {
+                    return currentRes
                 }
             }
 
             val elapsed = SystemClock.elapsedRealtime() - startTime
-            // Standard 5 outputs alphabetical order: Drawing, Hentai, Neutral, Porn, Sexy
-            NsfwResult(
-                drawing = probs[0],
-                hentai = probs[1],
-                neutral = probs[2],
-                porn = probs[3],
-                sexy = probs[4],
+            return NsfwResult(
+                drawing = maxDrawing,
+                hentai = maxHentai,
+                neutral = maxNeutral,
+                porn = maxPorn,
+                sexy = maxSexy,
                 inferenceTimeMs = elapsed,
                 isModelLoaded = true
             )
         } catch (e: Throwable) {
-            Log.e(TAG, "Error during TFLite inference: ${e.message}")
+            Log.e(TAG, "Error during multi-zone TFLite inference: ${e.message}")
             val elapsed = SystemClock.elapsedRealtime() - startTime
-            NsfwResult(
-                drawing = 0f,
-                hentai = 0f,
-                neutral = 1f,
-                porn = 0f,
-                sexy = 0f,
-                inferenceTimeMs = elapsed,
-                isModelLoaded = false
-            )
+            return NsfwResult(0f, 0f, 1f, 0f, 0f, elapsed, isModelLoaded = false)
+        } finally {
+            for (crop in cropsToTest) {
+                try {
+                    if (crop != fullScreenSoftwareBitmap && !crop.isRecycled) {
+                        crop.recycle()
+                    }
+                } catch (_: Throwable) {
+                }
+            }
         }
+    }
+
+    private fun runSingleInference(currentInterpreter: Interpreter, bitmap: Bitmap): FloatArray {
+        val imageProcessorBuilder = ImageProcessor.Builder()
+            .add(ResizeOp(INPUT_SIZE, INPUT_SIZE, ResizeOp.ResizeMethod.BILINEAR))
+
+        if (inputDataType == DataType.FLOAT32) {
+            imageProcessorBuilder.add(NormalizeOp(0f, 255f))
+        }
+
+        val imageProcessor = imageProcessorBuilder.build()
+        var tensorImage = TensorImage(inputDataType)
+        tensorImage.load(bitmap)
+        tensorImage = imageProcessor.process(tensorImage)
+
+        val outputTensor = currentInterpreter.getOutputTensor(0)
+        val outputType = outputTensor.dataType()
+
+        val probs = FloatArray(5)
+        if (outputType == DataType.UINT8) {
+            val outBuffer = ByteBuffer.allocateDirect(5).order(ByteOrder.nativeOrder())
+            currentInterpreter.run(tensorImage.buffer, outBuffer)
+            outBuffer.rewind()
+            for (i in 0 until 5) {
+                probs[i] = (outBuffer.get().toInt() and 0xFF) / 255.0f
+            }
+        } else {
+            val outputArray = Array(1) { FloatArray(5) }
+            currentInterpreter.run(tensorImage.buffer, outputArray)
+            for (i in 0 until 5) {
+                probs[i] = outputArray[0][i]
+            }
+        }
+        return probs
     }
 
     @Synchronized

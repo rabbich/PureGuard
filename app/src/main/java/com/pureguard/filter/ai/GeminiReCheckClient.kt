@@ -8,6 +8,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 data class GeminiEvaluationResult(
@@ -16,11 +17,18 @@ data class GeminiEvaluationResult(
     val error: String? = null
 )
 
+/**
+ * Layer 3 False-Positive Re-Check Client.
+ * Works 100% FREE with ZERO API KEY by default using:
+ * 1. Free Pollinations OpenAI-compatible text endpoint (no key, no registration, $0 cost)
+ * 2. Smart on-device contextual heuristic fallback (Torah/Medical/News/Technical verifier)
+ * 3. Optional Gemini Flash API if user happens to enter an API key.
+ */
 class GeminiReCheckClient {
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
         .build()
 
     suspend fun evaluateContext(
@@ -30,89 +38,151 @@ class GeminiReCheckClient {
         textSnippet: String,
         triggerReason: String
     ): GeminiEvaluationResult = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) {
-            return@withContext GeminiEvaluationResult(
-                isSafe = false,
-                explanationHe = "לא הוגדר מפתח Gemini API בהגדרות האפליקציה.",
-                error = "MISSING_API_KEY"
-            )
+        // 1. If user provided a Gemini API key, use Gemini Flash first
+        if (apiKey.isNotBlank()) {
+            val geminiRes = callGeminiFlash(apiKey, pageTitle, url, textSnippet, triggerReason)
+            if (geminiRes != null) return@withContext geminiRes
         }
 
-        try {
+        // 2. Otherwise use 100% FREE zero-key AI service (Pollinations Text AI)
+        val freeAiRes = callFreeZeroKeyAi(pageTitle, url, textSnippet, triggerReason)
+        if (freeAiRes != null) return@withContext freeAiRes
+
+        // 3. Offline instant heuristic fallback (zero internet dependency)
+        return@withContext evaluateLocalContextHeuristics(pageTitle, url, textSnippet, triggerReason)
+    }
+
+    private fun callFreeZeroKeyAi(
+        pageTitle: String,
+        url: String,
+        textSnippet: String,
+        triggerReason: String
+    ): GeminiEvaluationResult? {
+        return try {
             val prompt = """
-                You are a strict but fair content-filter false-positive evaluator for PureGuard.
-                A web page was blocked due to: "$triggerReason".
-                Evaluate whether the context below is LEGITIMATE (such as medical/health information, legitimate news, Torah/Halacha study, software/technical documentation, or general benign content) OR INAPPROPRIATE (pornography, explicit sexual content, adult dating/hookups, erotica).
+                You are a strict family-safe filter verifier.
+                A page was blocked for: "$triggerReason".
+                URL: $url
+                Title: $pageTitle
+                Text: ${textSnippet.take(700)}
+                Is this page strictly legitimate educational, medical, news, Torah/Halacha, or technical content (SAFE), or is it adult/immodest/sexual/kissing/bikini/porn content (UNSAFE)?
+                Reply ONLY with valid JSON: {"safe": true or false, "reason_he": "הסבר קצר בעברית"}
+            """.trimIndent()
 
-                Page URL: $url
-                Page Title: $pageTitle
-                Visible Text Snippet: ${textSnippet.take(1200)}
+            val encodedPrompt = URLEncoder.encode(prompt, "UTF-8")
+            val request = Request.Builder()
+                .url("https://text.pollinations.ai/$encodedPrompt?json=true")
+                .get()
+                .build()
 
-                Respond ONLY in valid JSON with two fields:
-                {"safe": true or false, "reason_he": "הסבר קצר בעברית מדוע התוכן בטוח או לא ראוי"}
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val bodyStr = response.body?.string().orEmpty().trim()
+                val startIdx = bodyStr.indexOf('{')
+                val endIdx = bodyStr.lastIndexOf('}')
+                if (startIdx == -1 || endIdx <= startIdx) return null
+
+                val jsonSlice = bodyStr.substring(startIdx, endIdx + 1)
+                val obj = JSONObject(jsonSlice)
+                val isSafe = obj.optBoolean("safe", false)
+                val reasonHe = obj.optString(
+                    "reason_he",
+                    if (isSafe) "התוכן נבדק על ידי AI חינמי ונמצא בטוח (הקשר לימודי/חדשותי/רפואי)."
+                    else "התוכן נבדק על ידי AI ונמצא לא ראוי."
+                )
+                GeminiEvaluationResult(isSafe = isSafe, explanationHe = reasonHe)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun evaluateLocalContextHeuristics(
+        pageTitle: String,
+        url: String,
+        textSnippet: String,
+        triggerReason: String
+    ): GeminiEvaluationResult {
+        val combined = "$url $pageTitle $textSnippet".lowercase()
+
+        val hardBlockTerms = listOf(
+            "pornhub", "xvideos", "xnxx", "onlyfans", "חוטיני", "נשיקה צרפתית",
+            "מתנשקות", "french kiss", "thong", "bikini try on", "פורנו", "xxx"
+        )
+        for (term in hardBlockTerms) {
+            if (combined.contains(term)) {
+                return GeminiEvaluationResult(
+                    isSafe = false,
+                    explanationHe = "בדיקת הקשר: נמצא ביטוי מפורש לא ראוי ('$term') ולכן החסימה נשארת בעינה."
+                )
+            }
+        }
+
+        val legitimateIndicators = listOf(
+            "רפואה", "בריאות", "בית חולים", "הלכה", "תלמוד", "תורה", "שו\"ת",
+            "ויקיפדיה", "wikipedia", "חדשות", "medical", "health", "clinical", "documentation"
+        )
+        val legitMatches = legitimateIndicators.count { combined.contains(it) }
+        return if (legitMatches >= 2) {
+            GeminiEvaluationResult(
+                isSafe = true,
+                explanationHe = "בדיקת הקשר חינמית: זוהה תוכן לגיטימי (רפואי / תורני / אנציקלופדי)."
+            )
+        } else {
+            GeminiEvaluationResult(
+                isSafe = false,
+                explanationHe = "בדיקת הקשר חינמית: לא נמצאה הצדקה רפואית/תורנית/לימודית לעקיפת החסימה."
+            )
+        }
+    }
+
+    private fun callGeminiFlash(
+        apiKey: String,
+        pageTitle: String,
+        url: String,
+        textSnippet: String,
+        triggerReason: String
+    ): GeminiEvaluationResult? {
+        return try {
+            val prompt = """
+                You are a strict content-filter false-positive evaluator for PureGuard.
+                A page was blocked due to: "$triggerReason".
+                URL: $url | Title: $pageTitle | Text: ${textSnippet.take(1000)}
+                Respond ONLY in JSON: {"safe": true or false, "reason_he": "הסבר קצר בעברית"}
             """.trimIndent()
 
             val payload = JSONObject().apply {
                 put("contents", JSONArray().put(
-                    JSONObject().put("parts", JSONArray().put(
-                        JSONObject().put("text", prompt)
-                    ))
+                    JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))
                 ))
-                put("generationConfig", JSONObject().apply {
-                    put("temperature", 0.1)
-                    put("responseMimeType", "application/json")
-                })
             }
 
             val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
             val requestBody = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-            val request = Request.Builder()
-                .url(endpoint)
-                .post(requestBody)
-                .build()
+            val request = Request.Builder().url(endpoint).post(requestBody).build()
 
             httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
                 val bodyStr = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    return@withContext GeminiEvaluationResult(
-                        isSafe = false,
-                        explanationHe = "שגיאת שרת (${response.code}) בעת פנייה ל-Gemini API.",
-                        error = bodyStr
-                    )
-                }
-
                 val root = JSONObject(bodyStr)
-                val candidates = root.optJSONArray("candidates")
-                val rawText = candidates
+                val rawText = root.optJSONArray("candidates")
                     ?.optJSONObject(0)
                     ?.optJSONObject("content")
                     ?.optJSONArray("parts")
                     ?.optJSONObject(0)
                     ?.optString("text")
                     .orEmpty()
-                    .trim()
 
-                val cleanedJson = rawText
-                    .removePrefix("```json")
-                    .removePrefix("```")
-                    .removeSuffix("```")
-                    .trim()
-
-                val resultObj = JSONObject(cleanedJson)
+                val startIdx = rawText.indexOf('{')
+                val endIdx = rawText.lastIndexOf('}')
+                if (startIdx == -1 || endIdx <= startIdx) return null
+                val resultObj = JSONObject(rawText.substring(startIdx, endIdx + 1))
                 val isSafe = resultObj.optBoolean("safe", false)
-                val reasonHe = resultObj.optString("reason_he", if (isSafe) "התוכן נמצא תקין ובטוח." else "התוכן זוהה כלא ראוי.")
-
-                GeminiEvaluationResult(
-                    isSafe = isSafe,
-                    explanationHe = reasonHe
-                )
+                val reasonHe = resultObj.optString("reason_he", "")
+                GeminiEvaluationResult(isSafe = isSafe, explanationHe = reasonHe)
             }
-        } catch (e: Exception) {
-            GeminiEvaluationResult(
-                isSafe = false,
-                explanationHe = "שגיאה בבדיקת ה-AI: ${e.localizedMessage ?: "שגיאת רשת"}",
-                error = e.message
-            )
+        } catch (_: Exception) {
+            null
         }
     }
 }

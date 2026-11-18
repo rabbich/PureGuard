@@ -31,7 +31,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
 @OptIn(FlowPreview::class)
@@ -93,7 +92,7 @@ class FilterAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Layer 2: Event-driven debounced visual AI check (1200ms debounce after scroll/content settles)
+        // Layer 2: Event-driven debounced visual AI check (750ms debounce after scroll/video/content event)
         serviceScope.launch(Dispatchers.Default) {
             visualScanTrigger
                 .debounce(DEBOUNCE_VISUAL_SCAN_MS)
@@ -133,12 +132,10 @@ class FilterAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // If browser entered foreground, scan text and schedule debounced AI check
-                if (BROWSER_PACKAGES.contains(pkg)) {
+                // If monitored app (browser, YouTube, social, search) entered foreground:
+                if (isMonitoredContentPackage(pkg)) {
                     scheduleTextAndUrlScan(pkg, forceImmediate = true)
-                    if (!WHITELIST_SAFE_PACKAGES.contains(pkg)) {
-                        visualScanTrigger.tryEmit(pkg)
-                    }
+                    visualScanTrigger.tryEmit(pkg)
                 }
             }
 
@@ -157,13 +154,9 @@ class FilterAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // Layer 1B: URL & Keyword Scanner (only on supported browsers)
-                if (BROWSER_PACKAGES.contains(pkg)) {
+                // Layer 1B + Layer 2 on any monitored content app (Browsers, YouTube, Instagram, TikTok, Google Search, etc.)
+                if (isMonitoredContentPackage(pkg)) {
                     scheduleTextAndUrlScan(pkg, forceImmediate = false)
-                }
-
-                // Layer 2: Event-driven AI trigger (only on browsers or monitored apps, never on whitelisted safe apps)
-                if (shouldRunVisualAiOnPackage(pkg)) {
                     visualScanTrigger.tryEmit(pkg)
                 }
             }
@@ -172,9 +165,17 @@ class FilterAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun shouldRunVisualAiOnPackage(pkg: String): Boolean {
+    /**
+     * Checks if package should be scanned for text/keywords AND visual AI screenshots.
+     * Excludes safe utility/messaging apps (WhatsApp, Waze, Dialer, Settings, Launcher).
+     */
+    private fun isMonitoredContentPackage(pkg: String): Boolean {
         if (WHITELIST_SAFE_PACKAGES.contains(pkg)) return false
-        return BROWSER_PACKAGES.contains(pkg)
+        return MONITORED_PACKAGES.contains(pkg) ||
+            pkg.contains("browser", ignoreCase = true) ||
+            pkg.contains("chrome", ignoreCase = true) ||
+            pkg.contains("youtube", ignoreCase = true) ||
+            pkg.contains("webview", ignoreCase = true)
     }
 
     private fun scheduleTextAndUrlScan(pkg: String, forceImmediate: Boolean) {
@@ -188,7 +189,7 @@ class FilterAccessibilityService : AccessibilityService() {
         serviceScope.launch(Dispatchers.Default) {
             val scanStart = SystemClock.elapsedRealtime()
             val extracted = try {
-                extractBrowserContent(rootNode, pkg)
+                extractScreenContent(rootNode, pkg)
             } catch (e: Exception) {
                 null
             } finally {
@@ -198,14 +199,16 @@ class FilterAccessibilityService : AccessibilityService() {
                 }
             } ?: return@launch
 
-            val urlOrIdentifier = extracted.url.ifBlank { pkg }
+            val urlOrIdentifier = extracted.url.ifBlank {
+                if (extracted.pageTitle.isNotBlank()) "$pkg (${extracted.pageTitle.take(35)})" else pkg
+            }
 
-            // Check temporary 24h whitelist (from AI Re-Check or Sandbox 1-time approve)
+            // Check temporary whitelist (from AI Re-Check or Sandbox 1-time approve)
             if (db.temporaryWhitelistDao().isWhitelisted(urlOrIdentifier)) {
                 return@launch
             }
 
-            val fullTextLower = "${extracted.url} ${extracted.visibleText}".lowercase()
+            val fullTextLower = "${extracted.url} ${extracted.pageTitle} ${extracted.visibleText}".lowercase()
             val urlLower = extracted.url.lowercase()
 
             var matchedKeyword: BlockedKeywordEntity? = null
@@ -249,10 +252,9 @@ class FilterAccessibilityService : AccessibilityService() {
 
     private fun performVisualAiScanIfEligible(pkg: String) {
         if (!powerManager.isInteractive) return
-        if (WHITELIST_SAFE_PACKAGES.contains(pkg)) return
-        if (!BROWSER_PACKAGES.contains(pkg)) return
+        if (!isMonitoredContentPackage(pkg)) return
 
-        // Enforce hard minimum cooldown of 2500ms between screenshots
+        // Enforce hard minimum cooldown of 2200ms between screenshots for zero battery drain
         val now = SystemClock.elapsedRealtime()
         if (now - lastScreenshotElapsed < HARD_SCREENSHOT_COOLDOWN_MS) {
             return
@@ -260,7 +262,6 @@ class FilterAccessibilityService : AccessibilityService() {
         lastScreenshotElapsed = now
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            // AccessibilityService.takeScreenshot requires API 30+ (Android 11+)
             return
         }
 
@@ -292,37 +293,36 @@ class FilterAccessibilityService : AccessibilityService() {
         val colorSpace = screenshotResult.colorSpace
         var hardwareBitmap: Bitmap? = null
         var softwareBitmap: Bitmap? = null
-        var scaledBitmap: Bitmap? = null
 
         try {
             val totalStart = SystemClock.elapsedRealtime()
             hardwareBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
             if (hardwareBitmap == null) return
 
-            // Convert HardwareBuffer bitmap directly to a downscaled 224x224 ARGB_8888 Bitmap in RAM
+            // Copy HardwareBuffer to an in-memory ARGB_8888 Bitmap for multi-zone crop evaluation
             softwareBitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
             if (softwareBitmap == null) return
-
-            scaledBitmap = Bitmap.createScaledBitmap(
-                softwareBitmap,
-                NsfwClassifier.INPUT_SIZE,
-                NsfwClassifier.INPUT_SIZE,
-                true
-            )
 
             val classifier = nsfwClassifier
             if (classifier == null || !classifier.isAvailable) {
                 val fallbackElapsed = SystemClock.elapsedRealtime() - totalStart
                 showDebugToastIfEnabled(
-                    "Scan: ${fallbackElapsed}ms | Model: Standby (Text Guard Active) | Safe"
+                    "Scan: ${fallbackElapsed}ms | שגיאה: מודל AI חסר ב-APK"
                 )
                 return
             }
 
-            val result = classifier.classify(scaledBitmap)
             val pornThresh = prefs.pornThreshold
             val sexyThresh = prefs.sexyThreshold
             val hentaiThresh = prefs.hentaiThreshold
+
+            // Multi-Zone Crop analysis (checks YouTube top video zone, center image zone, and feed zone)
+            val result = classifier.classifyFullScreenBitmap(
+                fullScreenSoftwareBitmap = softwareBitmap,
+                pornThresh = pornThresh,
+                sexyThresh = sexyThresh,
+                hentaiThresh = hentaiThresh
+            )
 
             val isViolation = result.isViolation(pornThresh, sexyThresh, hentaiThresh)
             val statusLabel = if (isViolation) "BLOCKED" else "Safe"
@@ -332,10 +332,12 @@ class FilterAccessibilityService : AccessibilityService() {
             )
 
             if (isViolation) {
-                // Check if current URL is whitelisted before blocking
                 val rootNode = rootInActiveWindow
-                val currentUrl = try {
-                    if (rootNode != null) extractBrowserContent(rootNode, pkg).url.ifBlank { pkg } else pkg
+                val currentIdentifier = try {
+                    if (rootNode != null) {
+                        val ext = extractScreenContent(rootNode, pkg)
+                        ext.url.ifBlank { if (ext.pageTitle.isNotBlank()) "$pkg (${ext.pageTitle.take(30)})" else pkg }
+                    } else pkg
                 } catch (_: Exception) {
                     pkg
                 } finally {
@@ -345,16 +347,16 @@ class FilterAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                if (db.temporaryWhitelistDao().isWhitelisted(currentUrl)) {
+                if (db.temporaryWhitelistDao().isWhitelisted(currentIdentifier)) {
                     return
                 }
 
                 val reason = result.formatReason(pornThresh, sexyThresh, hentaiThresh)
                 triggerBlockOverlay(
-                    targetAppOrUrl = currentUrl,
+                    targetAppOrUrl = currentIdentifier,
                     reason = reason,
-                    pageTitle = currentUrl,
-                    textSnippet = "זיהוי תמונה ויזואלי באמצעות מודל AI מקומי",
+                    pageTitle = currentIdentifier,
+                    textSnippet = "זיהוי תמונה/וידאו ויזואלי באמצעות מודל AI מקומי",
                     isTextBlock = false,
                     inferenceTimeMs = result.inferenceTimeMs,
                     navigateBack = true
@@ -364,12 +366,6 @@ class FilterAccessibilityService : AccessibilityService() {
             Log.e(TAG, "Error processing in-memory screenshot: ${e.message}")
         } finally {
             // Strictly recycle all Bitmaps and close HardwareBuffer immediately in RAM
-            try {
-                if (scaledBitmap != null && scaledBitmap != softwareBitmap && !scaledBitmap.isRecycled) {
-                    scaledBitmap.recycle()
-                }
-            } catch (_: Throwable) {
-            }
             try {
                 if (softwareBitmap != null && !softwareBitmap.isRecycled) {
                     softwareBitmap.recycle()
@@ -440,13 +436,13 @@ class FilterAccessibilityService : AccessibilityService() {
         }
     }
 
-    private data class BrowserExtractedContent(
+    private data class ScreenExtractedContent(
         val url: String,
         val pageTitle: String,
         val visibleText: String
     )
 
-    private fun extractBrowserContent(root: AccessibilityNodeInfo, pkg: String): BrowserExtractedContent {
+    private fun extractScreenContent(root: AccessibilityNodeInfo, pkg: String): ScreenExtractedContent {
         var detectedUrl = ""
         var detectedTitle = ""
         val textBuilder = StringBuilder()
@@ -473,10 +469,10 @@ class FilterAccessibilityService : AccessibilityService() {
             if (detectedUrl.isNotEmpty()) break
         }
 
-        // Traverse visible nodes (bounded to 120 nodes for ultra-fast <2ms traversal)
+        // Traverse visible nodes (bounded to 150 nodes for fast <3ms traversal across YouTube & Browsers)
         var visitedCount = 0
         fun traverse(node: AccessibilityNodeInfo?) {
-            if (node == null || visitedCount > 120) return
+            if (node == null || visitedCount > 150) return
             visitedCount++
 
             if (node.isVisibleToUser) {
@@ -486,21 +482,24 @@ class FilterAccessibilityService : AccessibilityService() {
                 if (nodeText.isNotEmpty()) {
                     if (detectedUrl.isEmpty() && looksLikeUrl(nodeText)) {
                         detectedUrl = nodeText
-                    } else if (detectedTitle.isEmpty() && nodeText.length in 4..90) {
+                    } else if (detectedTitle.isEmpty() && nodeText.length in 5..100) {
                         detectedTitle = nodeText
                     }
-                    if (textBuilder.length < 1500) {
+                    if (textBuilder.length < 2000) {
                         textBuilder.append(nodeText).append(' ')
                     }
                 }
-                if (contentDesc.isNotEmpty() && textBuilder.length < 1500) {
+                if (contentDesc.isNotEmpty() && textBuilder.length < 2000) {
+                    if (detectedTitle.isEmpty() && contentDesc.length in 5..100) {
+                        detectedTitle = contentDesc
+                    }
                     textBuilder.append(contentDesc).append(' ')
                 }
             }
 
             val childCount = node.childCount
             for (i in 0 until childCount) {
-                if (visitedCount > 120) break
+                if (visitedCount > 150) break
                 val child = node.getChild(i)
                 if (child != null) {
                     traverse(child)
@@ -514,7 +513,7 @@ class FilterAccessibilityService : AccessibilityService() {
 
         traverse(root)
 
-        return BrowserExtractedContent(
+        return ScreenExtractedContent(
             url = detectedUrl,
             pageTitle = detectedTitle,
             visibleText = textBuilder.toString().trim()
@@ -545,16 +544,45 @@ class FilterAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "FilterAccessService"
 
-        private const val TEXT_SCAN_THROTTLE_MS = 450L
-        private const val DEBOUNCE_VISUAL_SCAN_MS = 1200L
-        private const val HARD_SCREENSHOT_COOLDOWN_MS = 2500L
+        private const val TEXT_SCAN_THROTTLE_MS = 400L
+        private const val DEBOUNCE_VISUAL_SCAN_MS = 750L
+        private const val HARD_SCREENSHOT_COOLDOWN_MS = 2200L
 
-        val BROWSER_PACKAGES = setOf(
+        /**
+         * Monitored content packages where both Layer 1 (Keyword/URL) and Layer 2 (Visual AI) run.
+         * Includes all major Browsers, YouTube, Google Search/Photos, Instagram, TikTok, Telegram, Facebook, X/Twitter, Reddit.
+         */
+        val MONITORED_PACKAGES = setOf(
+            // Browsers
             "com.android.chrome",
             "org.mozilla.firefox",
             "com.sec.android.app.sbrowser",
             "com.mi.globalbrowser",
-            "com.brave.browser"
+            "com.brave.browser",
+            "com.microsoft.emmx",
+            "com.opera.browser",
+            "com.duckduckgo.mobile.android",
+            // YouTube & Video Players
+            "com.google.android.youtube",
+            "com.google.android.apps.youtube.mango",
+            "com.google.android.apps.youtube.kids",
+            "app.revanced.android.youtube",
+            // Google Search & Images
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.apps.photos",
+            "com.sec.android.gallery3d",
+            "com.miui.gallery",
+            // Social & Feeds
+            "com.instagram.android",
+            "com.zhiliaoapp.musically",
+            "com.ss.android.ugc.trill",
+            "com.facebook.katana",
+            "com.facebook.lite",
+            "com.twitter.android",
+            "com.reddit.frontpage",
+            "org.telegram.messenger",
+            "org.telegram.messenger.web",
+            "com.pinterest"
         )
 
         val WHITELIST_SAFE_PACKAGES = setOf(

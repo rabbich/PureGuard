@@ -26,18 +26,18 @@ jobs:
         with:
           gradle-version: '8.6'
 
-      - name: Download Quantized MobileNetV2 NSFW TFLite Model
+      - name: Verify MobileNetV2 NSFW TFLite Model in Assets
         run: |
           mkdir -p app/src/main/assets
-          echo "Downloading open-source MobileNetV2 nsfw.tflite model..."
-          curl -L --retry 3 --fail \
-            "https://github.com/GantMan/nsfw_model/releases/download/1.2.0/nsfw_mobilenet_v2_140_224.1.tflite" \
-            -o app/src/main/assets/nsfw.tflite || \
-          curl -L --retry 3 --fail \
-            "https://huggingface.co/spaces/Rxn19/nsfw-image-detection/resolve/main/nsfw.tflite" \
-            -o app/src/main/assets/nsfw.tflite || \
-          echo "Warning: Remote model mirror unavailable; NsfwClassifier will run in graceful text-only fallback mode."
-          ls -lh app/src/main/assets/
+          if [ ! -f app/src/main/assets/nsfw.tflite ]; then
+            echo "Downloading official MobileNetV2 nsfw_model release zip..."
+            curl -L --retry 3 --fail \
+              "https://github.com/GantMan/nsfw_model/releases/download/1.2.0/mobilenet_v2_140_224.1.zip" \
+              -o /tmp/nsfw_model.zip
+            unzip -p /tmp/nsfw_model.zip "mobilenet_v2_140_224/saved_model.tflite" > app/src/main/assets/nsfw.tflite
+            rm -f /tmp/nsfw_model.zip
+          fi
+          ls -lh app/src/main/assets/nsfw.tflite
 
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace

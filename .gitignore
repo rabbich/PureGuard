@@ -1,0 +1,7 @@
+platform-tools/
+*.apk
+*.zip
+.gradle/
+build/
+app/build/
+local.properties
