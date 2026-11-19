@@ -13,32 +13,46 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Header Banner -->
-        <LinearLayout
+        <!-- Kodeshield Branded Header Card -->
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            android:background="#1565C0"
-            android:orientation="vertical"
-            android:padding="18dp">
+            app:cardBackgroundColor="#FFFFFF"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="4dp"
+            app:strokeColor="#C99218"
+            app:strokeWidth="1.5dp">
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="PureGuard – סינון חכם וחסכוני בסוללה"
-                android:textColor="#FFFFFF"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-            <TextView
-                android:id="@+id/tvModeBanner"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="מצב פעולה: בדיקות ארגז חול (Sandbox Mode – ניתן להסרה בכל עת)"
-                android:textColor="#E3F2FD"
-                android:textSize="13sp" />
-        </LinearLayout>
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="84dp"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="Kodeshield – מגן הקודש"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/kodeshield_banner" />
+
+                <TextView
+                    android:id="@+id/tvModeBanner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="#042B59"
+                    android:gravity="center"
+                    android:padding="8dp"
+                    android:text="מצב פעולה: בדיקות ארגז חול (Sandbox Mode – ניתן להסרה בכל עת)"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- CARD 1: Filter Status -->
         <com.google.android.material.card.MaterialCardView

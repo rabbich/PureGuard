@@ -12,20 +12,33 @@ android {
         applicationId = "com.pureguard.filter"
         minSdk = 29
         targetSdk = 34
-        versionCode = 4
-        versionName = "3.1.0-sandbox"
+        versionCode = 5
+        versionName = "4.0.0-Kodeshield"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            // Build only for modern 64-bit ARM phones (like Nokia 6.1) to cut APK size by 60%
+            // Build only for modern 64-bit ARM phones to cut APK size by 60%
             abiFilters += listOf("arm64-v8a")
         }
     }
 
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("kodeshield.keystore")
+            storePassword = "kodeshield123"
+            keyAlias = "kodeshield"
+            keyPassword = "kodeshield123"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

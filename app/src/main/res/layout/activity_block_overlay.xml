@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#B71C1C"
+    android:background="#042B59"
     android:fillViewport="true"
     android:layoutDirection="rtl">
 
@@ -18,8 +18,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:cardBackgroundColor="#FFFFFF"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="8dp">
+            app:cardCornerRadius="22dp"
+            app:cardElevation="10dp"
+            app:strokeColor="#C99218"
+            app:strokeWidth="2dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -28,19 +30,21 @@
                 android:orientation="vertical"
                 android:padding="24dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🛡️"
-                    android:textSize="48sp" />
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="78dp"
+                    android:adjustViewBounds="true"
+                    android:contentDescription="Kodeshield – מגן הקודש"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/kodeshield_banner" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="PureGuard - הגנת תוכן פעילה"
-                    android:textColor="#B71C1C"
-                    android:textSize="22sp"
+                    android:layout_marginTop="10dp"
+                    android:text="מגן הקודש – שמירת העיניים פעילה"
+                    android:textColor="#042B59"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
 
                 <TextView

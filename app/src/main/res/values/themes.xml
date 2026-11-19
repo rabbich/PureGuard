@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.PureGuard" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#1565C0</item>
-        <item name="colorSecondary">#00897B</item>
-        <item name="android:statusBarColor">#0D47A1</item>
+        <item name="colorPrimary">#042B59</item>
+        <item name="colorSecondary">#C99218</item>
+        <item name="android:statusBarColor">#042B59</item>
     </style>
 
     <style name="Theme.PureGuard.BlockOverlay" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#C62828</item>
-        <item name="android:statusBarColor">#8E0000</item>
+        <item name="colorPrimary">#042B59</item>
+        <item name="android:statusBarColor">#031E3E</item>
         <item name="android:windowIsTranslucent">false</item>
     </style>
 </resources>
