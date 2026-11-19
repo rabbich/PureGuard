@@ -71,7 +71,7 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "stripchat.com", isDomain = true),
                 BlockedKeywordEntity(keyword = "brazzers.com", isDomain = true),
 
-                // English Keywords (Explicit + Kissing + Bikini/Thong + YouTube Shorts/X.com triggers)
+                // English Keywords (Explicit + Kissing + Bikini/Thong + Lingerie/Sheer + YouTube Shorts/X.com triggers)
                 BlockedKeywordEntity(keyword = "porn", isDomain = false),
                 BlockedKeywordEntity(keyword = "xxx", isDomain = false),
                 BlockedKeywordEntity(keyword = "nsfw", isDomain = false),
@@ -83,8 +83,20 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "g-string", isDomain = false),
                 BlockedKeywordEntity(keyword = "bikini", isDomain = false),
                 BlockedKeywordEntity(keyword = "lingerie", isDomain = false),
+                BlockedKeywordEntity(keyword = "lace-bra", isDomain = false),
+                BlockedKeywordEntity(keyword = "lace bra", isDomain = false),
+                BlockedKeywordEntity(keyword = "sheer bra", isDomain = false),
+                BlockedKeywordEntity(keyword = "transparent bra", isDomain = false),
+                BlockedKeywordEntity(keyword = "see-through", isDomain = false),
+                BlockedKeywordEntity(keyword = "see through bra", isDomain = false),
+                BlockedKeywordEntity(keyword = "panties", isDomain = false),
                 BlockedKeywordEntity(keyword = "underboob", isDomain = false),
+                BlockedKeywordEntity(keyword = "sideboob", isDomain = false),
+                BlockedKeywordEntity(keyword = "cameltoe", isDomain = false),
                 BlockedKeywordEntity(keyword = "cleavage", isDomain = false),
+                BlockedKeywordEntity(keyword = "striptease", isDomain = false),
+                BlockedKeywordEntity(keyword = "lap dance", isDomain = false),
+                BlockedKeywordEntity(keyword = "belly dance", isDomain = false),
                 BlockedKeywordEntity(keyword = "tongue kiss", isDomain = false),
                 BlockedKeywordEntity(keyword = "tonguekiss", isDomain = false),
                 BlockedKeywordEntity(keyword = "french kiss", isDomain = false),
@@ -103,7 +115,7 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "stripper", isDomain = false),
                 BlockedKeywordEntity(keyword = "camgirl", isDomain = false),
 
-                // Hebrew Keywords (Explicit + Kissing + Bikini/Thong + Immodest)
+                // Hebrew Keywords (Explicit + Kissing + Bikini/Thong + Lingerie/Immodest)
                 BlockedKeywordEntity(keyword = "פורנו", isDomain = false),
                 BlockedKeywordEntity(keyword = "סרטים כחולים", isDomain = false),
                 BlockedKeywordEntity(keyword = "עירום", isDomain = false),
@@ -114,6 +126,12 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "ביקיני", isDomain = false),
                 BlockedKeywordEntity(keyword = "בביקיני", isDomain = false),
                 BlockedKeywordEntity(keyword = "הלבשה תחתונה", isDomain = false),
+                BlockedKeywordEntity(keyword = "חזיה שקופה", isDomain = false),
+                BlockedKeywordEntity(keyword = "חזייה שקופה", isDomain = false),
+                BlockedKeywordEntity(keyword = "בחזיה", isDomain = false),
+                BlockedKeywordEntity(keyword = "בתחתונים", isDomain = false),
+                BlockedKeywordEntity(keyword = "בגד גוף חשוף", isDomain = false),
+                BlockedKeywordEntity(keyword = "ריקוד בטן", isDomain = false),
                 BlockedKeywordEntity(keyword = "נשיקה צרפתית", isDomain = false),
                 BlockedKeywordEntity(keyword = "מתנשקות", isDomain = false),
                 BlockedKeywordEntity(keyword = "מתנשקים", isDomain = false),

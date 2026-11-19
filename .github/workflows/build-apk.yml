@@ -7,6 +7,9 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -42,9 +45,22 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
 
+      - name: Copy APK for Release
+        run: cp app/build/outputs/apk/debug/app-debug.apk PureGuard-Sandbox-Debug.apk
+
       - name: Upload Ready-to-Install Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PureGuard-Sandbox-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: PureGuard-Sandbox-Debug.apk
           if-no-files-found: error
+
+      - name: Publish OTA Release for In-App 1-Click Updater
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "PureGuard Latest Sandbox Build"
+          files: PureGuard-Sandbox-Debug.apk
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

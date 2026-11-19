@@ -67,6 +67,12 @@ class FilterAccessibilityService : AccessibilityService() {
     private var lastScreenshotElapsed: Long = 0L
 
     @Volatile
+    private var lastContentEventElapsed: Long = 0L
+
+    @Volatile
+    private var lastBitmapSignature: Long = 0L
+
+    @Volatile
     private var lastBlockOverlayElapsed: Long = 0L
 
     private val visualScanTrigger = MutableSharedFlow<String>(
@@ -109,13 +115,22 @@ class FilterAccessibilityService : AccessibilityService() {
                 }
         }
 
-        // Video Watchdog: When user is actively watching a video/Short in Chrome/YouTube/X.com/TikTok
-        // without touching the screen, sample every 3.5 seconds while screen is interactive.
+        // Battery-Safe Video Watchdog:
+        // Only samples when the user is inside a video app (YouTube/TikTok) OR when content changed recently (<12s ago),
+        // preventing infinite scanning on static web pages.
         serviceScope.launch(Dispatchers.Default) {
             while (true) {
                 kotlinx.coroutines.delay(3500L)
                 val pkg = currentForegroundPackage
-                if (powerManager.isInteractive && pkg.isNotEmpty() && isMonitoredContentPackage(pkg)) {
+                val now = SystemClock.elapsedRealtime()
+                val isVideoApp = pkg.contains("youtube") || pkg.contains("musically") || pkg.contains("trill")
+                val hadRecentActivity = (now - lastContentEventElapsed) < 12000L
+                if (powerManager.isInteractive &&
+                    !prefs.isFilterPausedForTesting &&
+                    pkg.isNotEmpty() &&
+                    isMonitoredContentPackage(pkg) &&
+                    (isVideoApp || hadRecentActivity)
+                ) {
                     visualScanTrigger.tryEmit(pkg)
                 }
             }
@@ -133,6 +148,9 @@ class FilterAccessibilityService : AccessibilityService() {
 
         // Screen off check: zero work when screen is not interactive
         if (!powerManager.isInteractive) return
+
+        // Quick 1-Click Sandbox Testing Pause Toggle (only works when isLockdownEnabled == false)
+        if (prefs.isFilterPausedForTesting) return
 
         currentForegroundPackage = pkg
 
@@ -178,29 +196,7 @@ class FilterAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Also check the direct event text/contentDescription immediately (catches fast web/video titles)
-        if (isMonitoredContentPackage(pkg)) {
-            val eventImmediateText = buildString {
-                event.text?.forEach { append(it).append(' ') }
-                event.contentDescription?.let { append(it) }
-            }.trim()
-
-            if (eventImmediateText.isNotEmpty()) {
-                val matched = findMatchingKeyword(eventImmediateText, "")
-                if (matched != null) {
-                    triggerBlockOverlay(
-                        targetAppOrUrl = pkg,
-                        reason = "נחסם עקב מילת מפתח במסך: ${matched.keyword}",
-                        pageTitle = pkg,
-                        textSnippet = eventImmediateText.take(500),
-                        isTextBlock = true,
-                        inferenceTimeMs = 1L,
-                        navigateBack = true
-                    )
-                    return
-                }
-            }
-        }
+        lastContentEventElapsed = SystemClock.elapsedRealtime()
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
@@ -236,8 +232,13 @@ class FilterAccessibilityService : AccessibilityService() {
     private fun findMatchingKeyword(fullText: String, urlText: String): BlockedKeywordEntity? {
         val fullTextLower = fullText.lowercase()
         val urlLower = urlText.lowercase()
-        // Also strip spaces/underscores for glued handles like "@NUDEgirlsTongueKiss" or "ONLYFEMZ"
-        val compactTextLower = fullTextLower.replace(" ", "").replace("_", "").replace("-", "")
+
+        // Extract only continuous handle/hashtag/URL tokens (e.g. "@NUDEgirlsTongueKiss") for compact matching
+        // so normal two-word sentences never glue together into false positives!
+        val gluedTokensLower = fullTextLower
+            .split(Regex("\\s+"))
+            .filter { it.startsWith("@") || it.startsWith("#") || it.length >= 14 || it.contains("_") }
+            .joinToString(" ") { it.replace("_", "").replace("-", "") }
 
         for (item in cachedKeywords) {
             val kw = item.keyword.lowercase().trim()
@@ -248,7 +249,7 @@ class FilterAccessibilityService : AccessibilityService() {
                     return item
                 }
             } else {
-                if (fullTextLower.contains(kw) || (compactKw.length >= 5 && compactTextLower.contains(compactKw))) {
+                if (fullTextLower.contains(kw) || (compactKw.length >= 6 && gluedTokensLower.contains(compactKw))) {
                     return item
                 }
             }
@@ -263,119 +264,151 @@ class FilterAccessibilityService : AccessibilityService() {
         }
         lastTextScanElapsed = now
 
-        val rootNode = rootInActiveWindow ?: return
+        val activeRoot = rootInActiveWindow
+        val allRoots = mutableListOf<Pair<String, AccessibilityNodeInfo>>()
+        try {
+            val interactiveWindows = windows
+            if (!interactiveWindows.isNullOrEmpty()) {
+                for (win in interactiveWindows) {
+                    val winRoot = win.root ?: continue
+                    val winPkg = winRoot.packageName?.toString() ?: pkg
+                    if (winPkg != packageName && winPkg != "com.android.systemui" && isMonitoredContentPackage(winPkg)) {
+                        allRoots.add(winPkg to winRoot)
+                    } else {
+                        try { winRoot.recycle() } catch (_: Exception) {}
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        if (allRoots.isEmpty() && activeRoot != null) {
+            allRoots.add(pkg to activeRoot)
+        } else if (activeRoot != null) {
+            try { activeRoot.recycle() } catch (_: Exception) {}
+        }
+
+        if (allRoots.isEmpty()) return
+
         serviceScope.launch(Dispatchers.Default) {
-            val scanStart = SystemClock.elapsedRealtime()
-            val extracted = try {
-                extractScreenContent(rootNode, pkg)
-            } catch (e: Exception) {
-                null
-            } finally {
-                try {
-                    rootNode.recycle()
-                } catch (_: Exception) {
+            for ((targetPkg, rootNode) in allRoots) {
+                val scanStart = SystemClock.elapsedRealtime()
+                val extracted = try {
+                    extractScreenContent(rootNode, targetPkg)
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    try {
+                        rootNode.recycle()
+                    } catch (_: Exception) {
+                    }
+                } ?: continue
+
+                val urlOrIdentifier = extracted.url.ifBlank {
+                    if (extracted.pageTitle.isNotBlank()) "$targetPkg (${extracted.pageTitle.take(35)})" else targetPkg
                 }
-            } ?: return@launch
 
-            val urlOrIdentifier = extracted.url.ifBlank {
-                if (extracted.pageTitle.isNotBlank()) "$pkg (${extracted.pageTitle.take(35)})" else pkg
-            }
+                if (db.temporaryWhitelistDao().isWhitelisted(targetPkg) ||
+                    db.temporaryWhitelistDao().isWhitelisted(urlOrIdentifier) ||
+                    extracted.url.contains("antigravity.google.com", ignoreCase = true)
+                ) {
+                    continue
+                }
 
-            if (db.temporaryWhitelistDao().isWhitelisted(urlOrIdentifier)) {
-                return@launch
-            }
+                // UPGRADE 1: Block YouTube Shorts & Reels automatically while keeping regular YouTube open
+                val urlLower = extracted.url.lowercase()
+                if (prefs.blockYoutubeShortsAndReels) {
+                    val isShortsUrl = urlLower.contains("youtube.com/shorts") ||
+                        urlLower.contains("youtu.be/shorts") ||
+                        urlLower.contains("instagram.com/reels") ||
+                        urlLower.contains("facebook.com/reel")
+                    val isYoutubeAppShortsPlayer = (targetPkg.contains("youtube") && extracted.isShortsPlayerActive)
 
-            // UPGRADE 1: Block YouTube Shorts & Reels automatically while keeping regular YouTube open
-            val urlLower = extracted.url.lowercase()
-            if (prefs.blockYoutubeShortsAndReels) {
-                val isShortsUrl = urlLower.contains("youtube.com/shorts") ||
-                    urlLower.contains("youtu.be/shorts") ||
-                    urlLower.contains("instagram.com/reels") ||
-                    urlLower.contains("facebook.com/reel")
-                val isYoutubeAppShortsPlayer = (pkg.contains("youtube") && extracted.isShortsPlayerActive)
+                    if (isShortsUrl || isYoutubeAppShortsPlayer) {
+                        val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                        triggerBlockOverlay(
+                            targetAppOrUrl = urlOrIdentifier,
+                            reason = "נחסם אוטומטית: צפייה ב-YouTube Shorts / Reels חסומה לשמירת העיניים (יוטיוב רגיל פתוח)",
+                            pageTitle = extracted.pageTitle.ifBlank { "YouTube Shorts" },
+                            textSnippet = extracted.visibleText.take(400),
+                            isTextBlock = false,
+                            inferenceTimeMs = elapsedMs,
+                            navigateBack = true
+                        )
+                        return@launch
+                    }
+                }
 
-                if (isShortsUrl || isYoutubeAppShortsPlayer) {
-                    val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                // UPGRADE 2: Google-Only Search Engine Policy + Strict SafeSearch Enforcement
+                if (prefs.enforceSafeSearchAndRestrictedMode) {
+                    val blockedSearchDomain = findBlockedAlternativeSearchEngine(urlLower)
+                    if (blockedSearchDomain != null) {
+                        val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                        triggerBlockOverlay(
+                            targetAppOrUrl = urlOrIdentifier,
+                            reason = "נחסם ($blockedSearchDomain): מותר שימוש במנוע החיפוש של גוגל בלבד (עם חיפוש בטוח)",
+                            pageTitle = blockedSearchDomain,
+                            textSnippet = "",
+                            isTextBlock = false,
+                            inferenceTimeMs = elapsedMs,
+                            navigateBack = true
+                        )
+                        return@launch
+                    }
+
+                    if (BROWSER_PACKAGES.contains(targetPkg) && isUnfilteredGoogleSearchUrl(urlLower)) {
+                        enforceSafeSearchRedirectInBrowser(targetPkg, extracted.url)
+                        return@launch
+                    }
+                }
+
+                // UPGRADE 3: Block Grok (grok.com, x.com/i/grok, Grok tab inside X app) & Uncensored NSFW AI Generators
+                if (prefs.blockUncensoredAiAndGrok) {
+                    val blockedAiSite = findBlockedUncensoredAiSite(urlLower, targetPkg, extracted)
+                    if (blockedAiSite != null) {
+                        val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                        triggerBlockOverlay(
+                            targetAppOrUrl = urlOrIdentifier,
+                            reason = "נחסם ($blockedAiSite): מחולל AI ללא צנזורה (Grok / Uncensored AI) חסום לשמירת העיניים",
+                            pageTitle = blockedAiSite,
+                            textSnippet = "",
+                            isTextBlock = false,
+                            inferenceTimeMs = elapsedMs,
+                            navigateBack = true
+                        )
+                        return@launch
+                    }
+                }
+
+                val combinedText = "${extracted.url} ${extracted.pageTitle} ${extracted.visibleText}"
+                val matchedKeyword = findMatchingKeyword(combinedText, extracted.url)
+                val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+
+                if (matchedKeyword != null) {
+                    val reason = if (matchedKeyword.isDomain) {
+                        "נחסם עקב דומיין אסור: ${matchedKeyword.keyword}"
+                    } else {
+                        "נחסם עקב מילת מפתח בדף: ${matchedKeyword.keyword}"
+                    }
+
                     triggerBlockOverlay(
                         targetAppOrUrl = urlOrIdentifier,
-                        reason = "נחסם אוטומטית: צפייה ב-YouTube Shorts / Reels חסומה לשמירת העיניים (יוטיוב רגיל פתוח)",
-                        pageTitle = extracted.pageTitle.ifBlank { "YouTube Shorts" },
-                        textSnippet = extracted.visibleText.take(400),
-                        isTextBlock = false,
+                        reason = reason,
+                        pageTitle = extracted.pageTitle.ifBlank { urlOrIdentifier },
+                        textSnippet = extracted.visibleText.take(800),
+                        isTextBlock = true,
                         inferenceTimeMs = elapsedMs,
                         navigateBack = true
                     )
                     return@launch
                 }
-            }
-
-            // UPGRADE 2: Google-Only Search Engine Policy + Strict SafeSearch Enforcement
-            if (prefs.enforceSafeSearchAndRestrictedMode) {
-                val blockedSearchDomain = findBlockedAlternativeSearchEngine(urlLower)
-                if (blockedSearchDomain != null) {
-                    val elapsedMs = SystemClock.elapsedRealtime() - scanStart
-                    triggerBlockOverlay(
-                        targetAppOrUrl = urlOrIdentifier,
-                        reason = "נחסם ($blockedSearchDomain): מותר שימוש במנוע החיפוש של גוגל בלבד (עם חיפוש בטוח)",
-                        pageTitle = blockedSearchDomain,
-                        textSnippet = "",
-                        isTextBlock = false,
-                        inferenceTimeMs = elapsedMs,
-                        navigateBack = true
-                    )
-                    return@launch
-                }
-
-                if (BROWSER_PACKAGES.contains(pkg) && isUnfilteredGoogleSearchUrl(urlLower)) {
-                    enforceSafeSearchRedirectInBrowser(pkg, extracted.url)
-                    return@launch
-                }
-            }
-
-            // UPGRADE 3: Block Grok (grok.com, x.com/i/grok, Grok tab inside X app) & Uncensored NSFW AI Generators
-            if (prefs.blockUncensoredAiAndGrok) {
-                val blockedAiSite = findBlockedUncensoredAiSite(urlLower, pkg, extracted)
-                if (blockedAiSite != null) {
-                    val elapsedMs = SystemClock.elapsedRealtime() - scanStart
-                    triggerBlockOverlay(
-                        targetAppOrUrl = urlOrIdentifier,
-                        reason = "נחסם ($blockedAiSite): מחולל AI ללא צנזורה (Grok / Uncensored AI) חסום לשמירת העיניים",
-                        pageTitle = blockedAiSite,
-                        textSnippet = "",
-                        isTextBlock = false,
-                        inferenceTimeMs = elapsedMs,
-                        navigateBack = true
-                    )
-                    return@launch
-                }
-            }
-
-            val combinedText = "${extracted.url} ${extracted.pageTitle} ${extracted.visibleText}"
-            val matchedKeyword = findMatchingKeyword(combinedText, extracted.url)
-            val elapsedMs = SystemClock.elapsedRealtime() - scanStart
-
-            if (matchedKeyword != null) {
-                val reason = if (matchedKeyword.isDomain) {
-                    "נחסם עקב דומיין אסור: ${matchedKeyword.keyword}"
-                } else {
-                    "נחסם עקב מילת מפתח בדף: ${matchedKeyword.keyword}"
-                }
-
-                triggerBlockOverlay(
-                    targetAppOrUrl = urlOrIdentifier,
-                    reason = reason,
-                    pageTitle = extracted.pageTitle.ifBlank { urlOrIdentifier },
-                    textSnippet = extracted.visibleText.take(800),
-                    isTextBlock = true,
-                    inferenceTimeMs = elapsedMs,
-                    navigateBack = true
-                )
             }
         }
     }
 
     private fun performVisualAiScanIfEligible(pkg: String) {
         if (!powerManager.isInteractive) return
+        if (prefs.isFilterPausedForTesting) return
         if (!isMonitoredContentPackage(pkg)) return
 
         val now = SystemClock.elapsedRealtime()
@@ -446,18 +479,62 @@ class FilterAccessibilityService : AccessibilityService() {
         try {
             val totalStart = SystemClock.elapsedRealtime()
 
-            // STEP A: On-Device Visual OCR Scan (reads text burned into YouTube Shorts, video overlays, X.com images!)
-            val ocrText = ocrScanner?.extractTextFromBitmap(softwareBitmap).orEmpty()
+            // Check if current app or URL is already in the temporary whitelist (from 15-min Sandbox Bypass or 24h AI Approval)
+            val rootNodeForContext = rootInActiveWindow
+            val screenContext = try {
+                if (rootNodeForContext != null) extractScreenContent(rootNodeForContext, pkg)
+                else ScreenExtractedContent("", "", "")
+            } catch (_: Exception) {
+                ScreenExtractedContent("", "", "")
+            } finally {
+                try {
+                    rootNodeForContext?.recycle()
+                } catch (_: Exception) {
+                }
+            }
+
+            val currentIdentifier = screenContext.url.ifBlank {
+                if (screenContext.pageTitle.isNotBlank()) "$pkg (${screenContext.pageTitle.take(30)})" else pkg
+            }
+
+            if (db.temporaryWhitelistDao().isWhitelisted(pkg) ||
+                db.temporaryWhitelistDao().isWhitelisted(currentIdentifier) ||
+                screenContext.url.contains("antigravity.google.com", ignoreCase = true)
+            ) {
+                return
+            }
+
+            // Battery-Saving Visual Fingerprint Check:
+            // If the screen pixels haven't changed since the last scan, skip OCR & AI inference completely!
+            val currentSignature = objectAndSkinDetector?.computeFastBitmapSignature(softwareBitmap) ?: 0L
+            if (currentSignature != 0L && currentSignature == lastBitmapSignature) {
+                return
+            }
+            lastBitmapSignature = currentSignature
+
+            // SMART BATTERY FUNNEL:
+            // Step 1: Fast skin pre-check (<0.5ms) before running heavy ML Kit OCR or ObjectDetector
+            val quickFullSkinRatio = objectAndSkinDetector?.calculateSkinToneRatio(softwareBitmap) ?: 0f
+            val domHasEnoughText = screenContext.visibleText.length > 80
+            val shouldRunOcr = !domHasEnoughText || quickFullSkinRatio >= 0.04f || pkg.contains("youtube")
+
+            // STEP A: On-Device Visual OCR Scan (runs only when needed: video/image overlays or low DOM text)
+            val ocrText = if (shouldRunOcr) {
+                ocrScanner?.extractTextFromBitmap(softwareBitmap).orEmpty()
+            } else {
+                ""
+            }
             if (ocrText.isNotBlank()) {
                 val ocrMatched = findMatchingKeyword(ocrText, "")
                 if (ocrMatched != null) {
                     val ocrElapsed = SystemClock.elapsedRealtime() - totalStart
                     showDebugToastIfEnabled("OCR Blocked: '${ocrMatched.keyword}' (${ocrElapsed}ms)")
+                    val fullContextSnippet = "${screenContext.pageTitle}\n${screenContext.visibleText}\n$ocrText".take(1200)
                     triggerBlockOverlay(
-                        targetAppOrUrl = pkg,
+                        targetAppOrUrl = currentIdentifier,
                         reason = "נחסם עקב זיהוי טקסט בתוך התמונה/וידאו (OCR): ${ocrMatched.keyword}",
-                        pageTitle = pkg,
-                        textSnippet = ocrText.take(600),
+                        pageTitle = screenContext.pageTitle.ifBlank { currentIdentifier },
+                        textSnippet = fullContextSnippet,
                         isTextBlock = true,
                         inferenceTimeMs = ocrElapsed,
                         navigateBack = true
@@ -466,7 +543,7 @@ class FilterAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // STEP B: NetSpark-inspired Object Detection (`detectAndCropObjects`) + Skin Ratio (`skinThreshold`) + 7-Zone TFLite Model
+            // STEP B: Smart Battery-Safe TFLite Visual NSFW Model
             val classifier = nsfwClassifier
             if (classifier == null || !classifier.isAvailable) {
                 val fallbackElapsed = SystemClock.elapsedRealtime() - totalStart
@@ -474,8 +551,12 @@ class FilterAccessibilityService : AccessibilityService() {
                 return
             }
 
-            val detectedObjectCrops = objectAndSkinDetector?.detectObjectCrops(softwareBitmap) ?: emptyList()
-            val skinRatio = objectAndSkinDetector?.calculateSkinToneRatio(softwareBitmap) ?: 0f
+            // Only run ML Kit ObjectDetector when there is noticeable skin tone on screen (>= 3.5%)
+            val detectedObjectCrops = if (quickFullSkinRatio >= 0.035f) {
+                objectAndSkinDetector?.detectObjectCrops(softwareBitmap) ?: emptyList()
+            } else {
+                emptyList()
+            }
 
             val pornThresh = prefs.pornThreshold
             val sexyThresh = prefs.sexyThreshold
@@ -484,7 +565,7 @@ class FilterAccessibilityService : AccessibilityService() {
             val result = classifier.classifyFullScreenBitmap(
                 fullScreenSoftwareBitmap = softwareBitmap,
                 detectedObjectCrops = detectedObjectCrops,
-                skinRatio = skinRatio,
+                skinDetector = objectAndSkinDetector,
                 pornThresh = pornThresh,
                 sexyThresh = sexyThresh,
                 hentaiThresh = hentaiThresh
@@ -495,7 +576,7 @@ class FilterAccessibilityService : AccessibilityService() {
             val statusLabel = if (isViolation) "BLOCKED" else "Safe"
 
             showDebugToastIfEnabled(
-                "Scan: ${totalElapsed}ms | Porn: ${(result.porn * 100).toInt()}% | Sexy: ${(result.sexy * 100).toInt()}% | Skin: ${(skinRatio * 100).toInt()}% | $statusLabel"
+                "Scan: ${totalElapsed}ms | Porn: ${(result.porn * 100).toInt()}% | Sexy: ${(result.sexy * 100).toInt()}% | Skin: ${(result.skinRatio * 100).toInt()}% | $statusLabel"
             )
 
             if (isViolation) {
@@ -571,7 +652,10 @@ class FilterAccessibilityService : AccessibilityService() {
             )
         }
 
-        mainHandler.post {
+        // Delay 180ms after GLOBAL_ACTION_BACK so the system Back action finishes closing the browser page
+        // BEFORE BlockOverlayActivity opens on top (prevents Back action from accidentally dismissing the red overlay!)
+        val launchDelayMs = if (navigateBack) 180L else 0L
+        mainHandler.postDelayed({
             val intent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 putExtra(BlockOverlayActivity.EXTRA_TARGET_URL_OR_APP, targetAppOrUrl)
@@ -582,7 +666,7 @@ class FilterAccessibilityService : AccessibilityService() {
                 putExtra(BlockOverlayActivity.EXTRA_INFERENCE_MS, inferenceTimeMs)
             }
             startActivity(intent)
-        }
+        }, launchDelayMs)
     }
 
     private fun showDebugToastIfEnabled(message: String) {
@@ -735,6 +819,23 @@ class FilterAccessibilityService : AccessibilityService() {
                 isShortsActive = true
             }
 
+            // Auto-close intrusive popup ad banners (e.g. Google Ads / Taboola close buttons)
+            val descLower = node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
+            if (node.isClickable && (
+                    descLower == "close ad" ||
+                    descLower == "סגור מודעה" ||
+                    descLower == "סגירת המודעה" ||
+                    descLower == "dismiss ad" ||
+                    viewIdRes.endsWith(":id/ad_close_button") ||
+                    viewIdRes.endsWith(":id/close_ad")
+                )
+            ) {
+                try {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } catch (_: Exception) {
+                }
+            }
+
             val nodeText = node.text?.toString()?.trim().orEmpty()
             val contentDesc = node.contentDescription?.toString()?.trim().orEmpty()
 
@@ -805,9 +906,9 @@ class FilterAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "FilterAccessService"
 
-        private const val TEXT_SCAN_THROTTLE_MS = 350L
-        private const val DEBOUNCE_VISUAL_SCAN_MS = 650L
-        private const val HARD_SCREENSHOT_COOLDOWN_MS = 1800L
+        private const val TEXT_SCAN_THROTTLE_MS = 550L
+        private const val DEBOUNCE_VISUAL_SCAN_MS = 950L
+        private const val HARD_SCREENSHOT_COOLDOWN_MS = 2500L
 
         val BROWSER_PACKAGES = setOf(
             "com.android.chrome",

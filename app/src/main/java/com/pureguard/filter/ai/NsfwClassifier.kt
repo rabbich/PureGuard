@@ -109,14 +109,14 @@ class NsfwClassifier(private val context: Context) {
     fun classifyFullScreenBitmap(
         fullScreenSoftwareBitmap: Bitmap,
         detectedObjectCrops: List<Bitmap>,
-        skinRatio: Float,
+        skinDetector: ObjectAndSkinDetector?,
         pornThresh: Float,
         sexyThresh: Float,
         hentaiThresh: Float
     ): NsfwResult {
         val currentInterpreter = interpreter
         if (!isAvailable || currentInterpreter == null) {
-            return NsfwResult(0f, 0f, 1f, 0f, 0f, skinRatio, 0L, isModelLoaded = false)
+            return NsfwResult(0f, 0f, 1f, 0f, 0f, 0f, 0L, isModelLoaded = false)
         }
 
         val startTime = SystemClock.elapsedRealtime()
@@ -128,41 +128,78 @@ class NsfwClassifier(private val context: Context) {
         var maxNeutral = 1f
         var maxPorn = 0f
         var maxSexy = 0f
+        var maxSkinRatio = skinDetector?.calculateSkinToneRatio(fullScreenSoftwareBitmap) ?: 0f
 
         val cropsToTest = mutableListOf<Bitmap>()
         try {
-            // Priority 1: Exact object bounding boxes detected by ML Kit ObjectDetector (NetSpark detectAndCropObjects!)
-            cropsToTest.addAll(detectedObjectCrops)
+            val candidateCrops = mutableListOf<Bitmap>()
+            // Priority 1: Exact object bounding boxes detected by ML Kit ObjectDetector
+            candidateCrops.addAll(detectedObjectCrops)
 
             if (height > width * 1.2f) {
                 val fullW = width
-                // Priority 2: Center main square (catches fullscreen Shorts/Reels/Photos)
+                // Priority 2: Inner Center Portrait Zoom Crop (catches a model in the middle of a white background)
+                val zoomW = (width * 0.58f).toInt().coerceAtLeast(100)
+                val zoomH = (height * 0.52f).toInt().coerceAtLeast(100)
+                val zoomX = ((width - zoomW) / 2).coerceAtLeast(0)
+                val zoomY = ((height - zoomH) / 2).coerceAtLeast(0)
+                candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, zoomX, zoomY, zoomW, zoomH))
+
+                // Priority 3: Center main square (catches fullscreen Shorts/Reels/Photos)
                 val centerY = ((height - fullW) / 2).coerceAtLeast(0)
-                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, centerY, fullW, fullW))
+                candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, centerY, fullW, fullW))
 
-                // Priority 3: Top video player square (catches top YouTube video player)
+                // Priority 4: Top video player square (catches top YouTube video player)
                 val topY = (height * 0.08f).toInt().coerceAtMost(height - fullW)
-                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, topY, fullW, fullW))
+                candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, topY, fullW, fullW))
 
-                // Priority 4: Four 2x2 Grid Quadrants (Left-Top, Right-Top, Left-Bottom, Right-Bottom)
+                // Priority 5: Four 2x2 Grid Quadrants (Left-Top, Right-Top, Left-Bottom, Right-Bottom)
                 val halfW = (width / 2).coerceAtLeast(1)
                 val gridTopY = (height * 0.10f).toInt().coerceAtLeast(0)
                 val tileH = ((height * 0.38f).toInt()).coerceAtMost(height - gridTopY)
                 val gridBottomY = (gridTopY + tileH).coerceAtMost(height - tileH)
 
                 if (tileH > 50 && halfW > 50) {
-                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridTopY, halfW, tileH))
-                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridTopY, halfW, tileH))
-                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridBottomY, halfW, tileH))
-                    cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridBottomY, halfW, tileH))
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridTopY, halfW, tileH))
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridTopY, halfW, tileH))
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridBottomY, halfW, tileH))
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridBottomY, halfW, tileH))
                 }
             } else {
                 val cropSize = height
                 val centerX = ((width - cropSize) / 2).coerceAtLeast(0)
-                cropsToTest.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, centerX, 0, cropSize, cropSize))
+                candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, centerX, 0, cropSize, cropSize))
             }
 
-            for (crop in cropsToTest) {
+            // SMART BATTERY FUNNEL:
+            // Measure skin-tone density (<0.4ms each) on candidate crops first.
+            // Sort by highest skin ratio and only run heavy TFLite inference on the top 2 skin-richest regions!
+            val scoredCrops = candidateCrops.map { crop ->
+                val skin = skinDetector?.calculateSkinToneRatio(crop) ?: 0f
+                maxSkinRatio = max(maxSkinRatio, skin)
+                crop to skin
+            }.sortedByDescending { it.second }
+
+            cropsToTest.addAll(candidateCrops)
+
+            // Gate 1: If no region on the entire screen has at least 4.5% skin tone, skip heavy neural net completely!
+            if (maxSkinRatio < 0.045f) {
+                val fastElapsed = SystemClock.elapsedRealtime() - startTime
+                return NsfwResult(
+                    drawing = 0f,
+                    hentai = 0f,
+                    neutral = 1f,
+                    porn = 0f,
+                    sexy = 0f,
+                    skinRatio = maxSkinRatio,
+                    inferenceTimeMs = fastElapsed,
+                    isModelLoaded = true
+                )
+            }
+
+            // Gate 2: Run TFLite neural network ONLY on the top 2 skin-richest crops (cuts CPU work by 75%!)
+            val topCropsForAi = scoredCrops.filter { it.second >= 0.045f }.take(2)
+            for ((crop, cropSkin) in topCropsForAi) {
                 val scores = runSingleInference(currentInterpreter, crop)
                 maxDrawing = max(maxDrawing, scores[0])
                 maxHentai = max(maxHentai, scores[1])
@@ -176,7 +213,7 @@ class NsfwClassifier(private val context: Context) {
                     neutral = maxNeutral,
                     porn = maxPorn,
                     sexy = maxSexy,
-                    skinRatio = skinRatio,
+                    skinRatio = max(maxSkinRatio, cropSkin),
                     inferenceTimeMs = SystemClock.elapsedRealtime() - startTime,
                     isModelLoaded = true
                 )
@@ -192,14 +229,14 @@ class NsfwClassifier(private val context: Context) {
                 neutral = maxNeutral,
                 porn = maxPorn,
                 sexy = maxSexy,
-                skinRatio = skinRatio,
+                skinRatio = maxSkinRatio,
                 inferenceTimeMs = elapsed,
                 isModelLoaded = true
             )
         } catch (e: Throwable) {
             Log.e(TAG, "Error during multi-zone TFLite inference: ${e.message}")
             val elapsed = SystemClock.elapsedRealtime() - startTime
-            return NsfwResult(0f, 0f, 1f, 0f, 0f, skinRatio, elapsed, isModelLoaded = false)
+            return NsfwResult(0f, 0f, 1f, 0f, 0f, maxSkinRatio, elapsed, isModelLoaded = false)
         } finally {
             for (crop in cropsToTest) {
                 try {

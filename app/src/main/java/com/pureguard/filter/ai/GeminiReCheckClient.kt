@@ -59,20 +59,36 @@ class GeminiReCheckClient {
         triggerReason: String
     ): GeminiEvaluationResult? {
         return try {
-            val prompt = """
-                You are a strict family-safe filter verifier.
-                A page was blocked for: "$triggerReason".
-                URL: $url
-                Title: $pageTitle
-                Text: ${textSnippet.take(700)}
-                Is this page strictly legitimate educational, medical, news, Torah/Halacha, or technical content (SAFE), or is it adult/immodest/sexual/kissing/bikini/porn content (UNSAFE)?
-                Reply ONLY with valid JSON: {"safe": true or false, "reason_he": "הסבר קצר בעברית"}
+            val systemPrompt = """
+                You are an intelligent false-positive context reviewer for "PureGuard", a Jewish modesty & content filter app being developed and tested by the user.
+                IMPORTANT RULES:
+                1. If the text is a conversation with an AI assistant, software development discussion, testing/building a content filter app, Torah/Halacha study, medical/health info, or general news where keywords were only mentioned technically -> it is 100% SAFE ("safe": true).
+                2. Only mark "safe": false if the page itself is actually displaying or promoting pornography, immodest adult content, or erotic material.
+                Respond ONLY with valid JSON in natural, fluent Hebrew:
+                {"safe": true or false, "reason_he": "הסבר ברור ותקין בעברית"}
             """.trimIndent()
 
-            val encodedPrompt = URLEncoder.encode(prompt, "UTF-8")
+            val userContent = """
+                Trigger Reason: $triggerReason
+                App / URL: $url
+                Title: $pageTitle
+                Full Screen Text Context:
+                ${textSnippet.take(1200)}
+            """.trimIndent()
+
+            val payload = JSONObject().apply {
+                put("model", "openai")
+                put("messages", JSONArray().apply {
+                    put(JSONObject().put("role", "system").put("content", systemPrompt))
+                    put(JSONObject().put("role", "user").put("content", userContent))
+                })
+                put("jsonMode", true)
+            }
+
+            val requestBody = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
             val request = Request.Builder()
-                .url("https://text.pollinations.ai/$encodedPrompt?json=true")
-                .get()
+                .url("https://text.pollinations.ai/")
+                .post(requestBody)
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
@@ -87,7 +103,7 @@ class GeminiReCheckClient {
                 val isSafe = obj.optBoolean("safe", false)
                 val reasonHe = obj.optString(
                     "reason_he",
-                    if (isSafe) "התוכן נבדק על ידי AI חינמי ונמצא בטוח (הקשר לימודי/חדשותי/רפואי)."
+                    if (isSafe) "התוכן נבדק על ידי AI ונמצא בטוח (הקשר טכני / פיתוח / לימודי)."
                     else "התוכן נבדק על ידי AI ונמצא לא ראוי."
                 )
                 GeminiEvaluationResult(isSafe = isSafe, explanationHe = reasonHe)

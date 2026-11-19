@@ -35,6 +35,7 @@ import com.pureguard.filter.databinding.ActivityMainBinding
 import com.pureguard.filter.service.Android10ScreenCapturer
 import com.pureguard.filter.service.FilterAccessibilityService
 import com.pureguard.filter.service.ScreenCaptureKeepAliveService
+import com.pureguard.filter.update.OtaUpdateManager
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -47,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: PreferencesManager
     private lateinit var db: PureGuardDatabase
     private lateinit var lockdownManager: LockdownManager
+    private lateinit var otaUpdateManager: OtaUpdateManager
     private val timeFormatter = SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault())
 
     private val screenCaptureLauncher = registerForActivityResult(
@@ -73,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         prefs = PreferencesManager(this)
         db = PureGuardDatabase.getInstance(this)
         lockdownManager = LockdownManager(this)
+        otaUpdateManager = OtaUpdateManager(this)
 
         setupCard1FilterStatus()
         setupCard2KeywordsAppsAndSliders()
@@ -86,6 +89,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCard1FilterStatus() {
+        binding.switchPauseFilterTesting.isChecked = prefs.isFilterPausedForTesting
+        binding.switchPauseFilterTesting.setOnCheckedChangeListener { _, isChecked ->
+            prefs.isFilterPausedForTesting = isChecked
+            val msg = if (isChecked) "הסינון הושהה זמנית (מצב בדיקות)" else "הסינון חזר לפעול! 🛡️"
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            refreshServiceAndLockdownStatus()
+        }
+
+        binding.btnOtaUpdate.setOnClickListener {
+            binding.btnOtaUpdate.isEnabled = false
+            binding.tvOtaStatus.visibility = View.VISIBLE
+            lifecycleScope.launch {
+                val res = otaUpdateManager.downloadAndInstallLatestApk { _, statusText ->
+                    binding.tvOtaStatus.text = statusText
+                }
+                binding.btnOtaUpdate.isEnabled = true
+                res.onFailure { err ->
+                    binding.tvOtaStatus.text = "שגיאה בעדכון: ${err.localizedMessage}"
+                }
+            }
+        }
+
         binding.switchBlockShorts.isChecked = prefs.blockYoutubeShortsAndReels
         binding.switchBlockShorts.setOnCheckedChangeListener { _, isChecked ->
             prefs.blockYoutubeShortsAndReels = isChecked
@@ -126,15 +151,16 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnPrivateDnsGuide.setOnClickListener {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Private DNS", "family.cloudflare-dns.com"))
+            clipboard.setPrimaryClip(ClipData.newPlainText("Private DNS", "family.adguard-dns.com"))
 
             AlertDialog.Builder(this)
-                .setTitle("הגדרת DNS פרטי (סינון רמת רשת)")
+                .setTitle("חסימת פרסומות + סינון משפחתי (0% סוללה)")
                 .setMessage(
-                    "הכתובת family.cloudflare-dns.com הועתקה ללוח!\n\n" +
+                    "הכתובת family.adguard-dns.com הועתקה ללוח!\n" +
+                        "כתובת זו חוסמת את כל הפרסומות באתרים ובאפליקציות (כולל באנרים של ספרים/טאבולה/גוגל) + אתרי מבוגרים + כופה חיפוש בטוח.\n\n" +
                         "1. לחץ על 'פתח הגדרות חיבורים'\n" +
                         "2. בחר ב-'DNS פרטי' (Private DNS)\n" +
-                        "3. הדבק את השם: family.cloudflare-dns.com ושמור."
+                        "3. בחר 'שם מארח של ספק DNS פרטי' והדבק:\nfamily.adguard-dns.com"
                 )
                 .setPositiveButton("פתח הגדרות חיבורים") { _, _ ->
                     try {
@@ -412,12 +438,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (!prefs.isLockdownEnabled) {
+            binding.switchPauseFilterTesting.visibility = View.VISIBLE
             binding.tvModeBanner.text =
                 "מצב פעולה: בדיקות ארגז חול (Sandbox Mode – ניתן להסרה בכל עת)"
             binding.tvLockdownStatus.text =
                 "כבוי כברירת מחדל (מצב בדיקות בטוח – ללא חסימת ADB וללא מניעת הסרה)"
             binding.btnToggleLockdown.text = "הפעל מצב נעילה מלא (לאחר סיום הבדיקות)"
         } else {
+            binding.switchPauseFilterTesting.visibility = View.GONE
             binding.tvModeBanner.text =
                 "מצב פעולה: נעילה מלאה פעילה (Production Lockdown)"
             val rem = lockdownManager.getRemainingCooldownMs()

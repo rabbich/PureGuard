@@ -64,8 +64,8 @@ class BlockOverlayActivity : AppCompatActivity() {
         binding.tvBlockReason.text = blockReason
         binding.tvTargetInfo.text = "מקור: $targetUrlOrApp"
 
-        // Show AI Re-Check button for text/URL blocks
-        binding.btnAiReCheck.visibility = if (isTextBlock) View.VISIBLE else View.GONE
+        // Always show AI Re-Check button so false positives on any page can be verified by context
+        binding.btnAiReCheck.visibility = View.VISIBLE
 
         // CRITICAL REQUIREMENT: "אשר חד-פעמית (מצב בדיקות)" visible ONLY when isLockdownEnabled == false
         binding.btnSandboxBypass.visibility = if (!prefs.isLockdownEnabled) View.VISIBLE else View.GONE
@@ -84,6 +84,15 @@ class BlockOverlayActivity : AppCompatActivity() {
                             expiresAt = expiresIn15Min
                         )
                     )
+                    val pkgPrefix = targetUrlOrApp.substringBefore(" ").trim()
+                    if (pkgPrefix.isNotBlank() && pkgPrefix != targetUrlOrApp) {
+                        db.temporaryWhitelistDao().insertWhitelist(
+                            TemporaryWhitelistEntity(
+                                urlOrKey = pkgPrefix,
+                                expiresAt = expiresIn15Min
+                            )
+                        )
+                    }
                 }
                 Toast.makeText(
                     this@BlockOverlayActivity,
@@ -129,6 +138,15 @@ class BlockOverlayActivity : AppCompatActivity() {
                             expiresAt = valid24Hours
                         )
                     )
+                    val pkgPrefix = targetUrlOrApp.substringBefore(" ").trim()
+                    if (pkgPrefix.isNotBlank() && pkgPrefix != targetUrlOrApp) {
+                        db.temporaryWhitelistDao().insertWhitelist(
+                            TemporaryWhitelistEntity(
+                                urlOrKey = pkgPrefix,
+                                expiresAt = valid24Hours
+                            )
+                        )
+                    }
                 }
                 Toast.makeText(
                     this@BlockOverlayActivity,

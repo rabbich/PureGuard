@@ -17,6 +17,14 @@ class PreferencesManager(context: Context) {
         get() = prefs.getBoolean(KEY_LOCKDOWN_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_LOCKDOWN_ENABLED, value).apply()
 
+    /**
+     * Quick 1-click pause toggle for Sandbox testing mode.
+     * Can NEVER be active when isLockdownEnabled == true.
+     */
+    var isFilterPausedForTesting: Boolean
+        get() = !isLockdownEnabled && prefs.getBoolean(KEY_FILTER_PAUSED_TESTING, false)
+        set(value) = prefs.edit().putBoolean(KEY_FILTER_PAUSED_TESTING, value).apply()
+
     var blockYoutubeShortsAndReels: Boolean
         get() = prefs.getBoolean(KEY_BLOCK_SHORTS_REELS, true)
         set(value) = prefs.edit().putBoolean(KEY_BLOCK_SHORTS_REELS, value).apply()
@@ -56,6 +64,7 @@ class PreferencesManager(context: Context) {
     companion object {
         private const val PREFS_NAME = "pureguard_prefs"
         private const val KEY_LOCKDOWN_ENABLED = "is_lockdown_enabled"
+        private const val KEY_FILTER_PAUSED_TESTING = "is_filter_paused_for_testing"
         private const val KEY_BLOCK_SHORTS_REELS = "block_youtube_shorts_and_reels"
         private const val KEY_ENFORCE_SAFESEARCH = "enforce_safesearch_restricted"
         private const val KEY_BLOCK_GROK_AI = "block_uncensored_ai_and_grok"

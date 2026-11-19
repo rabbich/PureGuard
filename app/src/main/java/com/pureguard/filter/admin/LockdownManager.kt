@@ -47,7 +47,7 @@ class LockdownManager(private val context: Context) {
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
-                applyPrivateDnsLock("family.cloudflare-dns.com")
+                applyPrivateDnsLock("family.adguard-dns.com")
             }
             Result.success(Unit)
         } catch (e: Exception) {

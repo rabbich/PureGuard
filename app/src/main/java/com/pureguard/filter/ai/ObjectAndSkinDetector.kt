@@ -105,6 +105,28 @@ class ObjectAndSkinDetector {
         return if (totalSampled > 0) skinPixels.toFloat() / totalSampled.toFloat() else 0f
     }
 
+    /**
+     * Ultra-fast (<0.1ms) 64-bit visual fingerprint of a screen Bitmap.
+     * Used to skip redundant OCR & TFLite runs when the screen is static (saves massive battery!).
+     */
+    fun computeFastBitmapSignature(bitmap: Bitmap): Long {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w < 8 || h < 8) return 0L
+        var hash = 1125899906842597L
+        for (gy in 1..8) {
+            val y = (h * gy) / 9
+            for (gx in 1..8) {
+                val x = (w * gx) / 9
+                val p = bitmap.getPixel(x, y)
+                // Quantize RGB to top 4 bits so tiny video compression noise doesn't change the signature
+                val quantized = ((p shr 20) and 0xF) or (((p shr 12) and 0xF) shl 4) or (((p shr 4) and 0xF) shl 8)
+                hash = (hash * 31L) + quantized.toLong()
+            }
+        }
+        return hash
+    }
+
     private fun isHumanSkinRgbYCbCr(r: Int, g: Int, b: Int): Boolean {
         // Classic peer-reviewed RGB + YCbCr human skin cluster rule
         val rgbRule = r > 95 && g > 40 && b > 20 &&
