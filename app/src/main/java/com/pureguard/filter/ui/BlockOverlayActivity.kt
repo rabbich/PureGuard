@@ -64,8 +64,8 @@ class BlockOverlayActivity : AppCompatActivity() {
         binding.tvBlockReason.text = blockReason
         binding.tvTargetInfo.text = "מקור: $targetUrlOrApp"
 
-        // Always show AI Re-Check button so false positives on any page can be verified by context
-        binding.btnAiReCheck.visibility = View.VISIBLE
+        // CRITICAL FIX: Only show text-based AI Re-Check button when blocked by text/keyword!
+        binding.btnAiReCheck.visibility = if (isTextBlock) View.VISIBLE else View.GONE
 
         // CRITICAL REQUIREMENT: "אשר חד-פעמית (מצב בדיקות)" visible ONLY when isLockdownEnabled == false
         binding.btnSandboxBypass.visibility = if (!prefs.isLockdownEnabled) View.VISIBLE else View.GONE

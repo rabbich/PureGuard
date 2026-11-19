@@ -218,10 +218,49 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="2. ניהול מילים ואפליקציות לבדיקה"
+                    android:text="2. רמת סינון וניהול מילים ואפליקציות"
                     android:textColor="#0D47A1"
                     android:textSize="17sp"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="בחר פרופיל רמת סינון (כמו בנטספארק):"
+                    android:textColor="#37474F"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <RadioGroup
+                    android:id="@+id/rgFilterProfile"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/rbProfileStrict"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:text="🛡️ שמירת עיניים מלאה (מחמיר - חוסם גם הלבשה תחתונה וביקיני)"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbProfileModerateShopping"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="🛍️ מותאם לנשים (קניות ואופנה פתוחים - חוסם רק עירום ופורנו)"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbProfileCustom"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="⚙️ מותאם אישית (כיוון ידני של הסליידרים)"
+                        android:textSize="13sp" />
+                </RadioGroup>
 
                 <!-- Add Keyword / Domain -->
                 <LinearLayout

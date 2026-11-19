@@ -25,6 +25,16 @@ class PreferencesManager(context: Context) {
         get() = !isLockdownEnabled && prefs.getBoolean(KEY_FILTER_PAUSED_TESTING, false)
         set(value) = prefs.edit().putBoolean(KEY_FILTER_PAUSED_TESTING, value).apply()
 
+    /**
+     * Filtration Profile Level:
+     * 0 = STRICT ("שמירת עיניים מלאה - מחמיר")
+     * 1 = MODERATE_SHOPPING ("מותאם לנשים - קניות ואופנה פתוחים")
+     * 2 = CUSTOM ("מותאם אישית")
+     */
+    var filterProfileLevel: Int
+        get() = prefs.getInt(KEY_FILTER_PROFILE_LEVEL, PROFILE_STRICT)
+        set(value) = prefs.edit().putInt(KEY_FILTER_PROFILE_LEVEL, value).apply()
+
     var blockYoutubeShortsAndReels: Boolean
         get() = prefs.getBoolean(KEY_BLOCK_SHORTS_REELS, true)
         set(value) = prefs.edit().putBoolean(KEY_BLOCK_SHORTS_REELS, value).apply()
@@ -65,7 +75,12 @@ class PreferencesManager(context: Context) {
         private const val PREFS_NAME = "pureguard_prefs"
         private const val KEY_LOCKDOWN_ENABLED = "is_lockdown_enabled"
         private const val KEY_FILTER_PAUSED_TESTING = "is_filter_paused_for_testing"
+        private const val KEY_FILTER_PROFILE_LEVEL = "filter_profile_level"
         private const val KEY_BLOCK_SHORTS_REELS = "block_youtube_shorts_and_reels"
+
+        const val PROFILE_STRICT = 0
+        const val PROFILE_MODERATE_SHOPPING = 1
+        const val PROFILE_CUSTOM = 2
         private const val KEY_ENFORCE_SAFESEARCH = "enforce_safesearch_restricted"
         private const val KEY_BLOCK_GROK_AI = "block_uncensored_ai_and_grok"
         private const val KEY_SHOW_DEBUG_TOAST = "show_debug_toast"

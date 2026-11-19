@@ -175,6 +175,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCard2KeywordsAppsAndSliders() {
+        var isUpdatingSlidersProgrammatically = false
+
+        fun syncProfileRadioSelection() {
+            when (prefs.filterProfileLevel) {
+                PreferencesManager.PROFILE_STRICT -> binding.rbProfileStrict.isChecked = true
+                PreferencesManager.PROFILE_MODERATE_SHOPPING -> binding.rbProfileModerateShopping.isChecked = true
+                else -> binding.rbProfileCustom.isChecked = true
+            }
+        }
+
+        syncProfileRadioSelection()
+
         val initialPornPercent = (prefs.pornThreshold * 100).toInt().coerceIn(30, 90)
         val initialSexyPercent = (prefs.sexyThreshold * 100).toInt().coerceIn(30, 90)
 
@@ -184,16 +196,59 @@ class MainActivity : AppCompatActivity() {
         binding.sliderSexyThreshold.value = initialSexyPercent.toFloat()
         binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: ${initialSexyPercent}%"
 
-        binding.sliderPornThreshold.addOnChangeListener { _, value, _ ->
+        binding.rgFilterProfile.setOnCheckedChangeListener { _, checkedId ->
+            if (isUpdatingSlidersProgrammatically) return@setOnCheckedChangeListener
+            isUpdatingSlidersProgrammatically = true
+            when (checkedId) {
+                binding.rbProfileStrict.id -> {
+                    prefs.filterProfileLevel = PreferencesManager.PROFILE_STRICT
+                    prefs.pornThreshold = 0.30f
+                    prefs.sexyThreshold = 0.35f
+                    binding.sliderPornThreshold.value = 30f
+                    binding.sliderSexyThreshold.value = 35f
+                    binding.tvPornThresholdLabel.text = "רגישות סף Porn: 30%"
+                    binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: 35%"
+                    Toast.makeText(this, "הופעל פרופיל: שמירת עיניים מלאה (מחמיר) 🛡️", Toast.LENGTH_SHORT).show()
+                }
+                binding.rbProfileModerateShopping.id -> {
+                    prefs.filterProfileLevel = PreferencesManager.PROFILE_MODERATE_SHOPPING
+                    prefs.pornThreshold = 0.55f
+                    prefs.sexyThreshold = 0.85f
+                    binding.sliderPornThreshold.value = 55f
+                    binding.sliderSexyThreshold.value = 85f
+                    binding.tvPornThresholdLabel.text = "רגישות סף Porn: 55%"
+                    binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: 85% (קניות פתוחות)"
+                    Toast.makeText(this, "הופעל פרופיל: מותאם לנשים (קניות ואופנה פתוחים) 🛍️", Toast.LENGTH_SHORT).show()
+                }
+                binding.rbProfileCustom.id -> {
+                    prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
+                }
+            }
+            isUpdatingSlidersProgrammatically = false
+        }
+
+        binding.sliderPornThreshold.addOnChangeListener { _, value, fromUser ->
             val pct = value.toInt()
             binding.tvPornThresholdLabel.text = "רגישות סף Porn: ${pct}%"
             prefs.pornThreshold = pct / 100f
+            if (fromUser && !isUpdatingSlidersProgrammatically) {
+                isUpdatingSlidersProgrammatically = true
+                prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
+                binding.rbProfileCustom.isChecked = true
+                isUpdatingSlidersProgrammatically = false
+            }
         }
 
-        binding.sliderSexyThreshold.addOnChangeListener { _, value, _ ->
+        binding.sliderSexyThreshold.addOnChangeListener { _, value, fromUser ->
             val pct = value.toInt()
             binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: ${pct}%"
             prefs.sexyThreshold = pct / 100f
+            if (fromUser && !isUpdatingSlidersProgrammatically) {
+                isUpdatingSlidersProgrammatically = true
+                prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
+                binding.rbProfileCustom.isChecked = true
+                isUpdatingSlidersProgrammatically = false
+            }
         }
 
         binding.btnAddKeyword.setOnClickListener {
@@ -439,6 +494,9 @@ class MainActivity : AppCompatActivity() {
 
         if (!prefs.isLockdownEnabled) {
             binding.switchPauseFilterTesting.visibility = View.VISIBLE
+            binding.rbProfileStrict.isEnabled = true
+            binding.rbProfileModerateShopping.isEnabled = true
+            binding.rbProfileCustom.isEnabled = true
             binding.tvModeBanner.text =
                 "מצב פעולה: בדיקות ארגז חול (Sandbox Mode – ניתן להסרה בכל עת)"
             binding.tvLockdownStatus.text =
@@ -446,6 +504,9 @@ class MainActivity : AppCompatActivity() {
             binding.btnToggleLockdown.text = "הפעל מצב נעילה מלא (לאחר סיום הבדיקות)"
         } else {
             binding.switchPauseFilterTesting.visibility = View.GONE
+            binding.rbProfileStrict.isEnabled = false
+            binding.rbProfileModerateShopping.isEnabled = false
+            binding.rbProfileCustom.isEnabled = false
             binding.tvModeBanner.text =
                 "מצב פעולה: נעילה מלאה פעילה (Production Lockdown)"
             val rem = lockdownManager.getRemainingCooldownMs()

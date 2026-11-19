@@ -24,6 +24,7 @@ import com.pureguard.filter.data.BlockedAppEntity
 import com.pureguard.filter.data.BlockedKeywordEntity
 import com.pureguard.filter.data.PreferencesManager
 import com.pureguard.filter.data.PureGuardDatabase
+import com.pureguard.filter.ui.AccessibilityBlockOverlayManager
 import com.pureguard.filter.ui.BlockOverlayActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +51,7 @@ class FilterAccessibilityService : AccessibilityService() {
     private var nsfwClassifier: NsfwClassifier? = null
     private var ocrScanner: ScreenOcrScanner? = null
     private var objectAndSkinDetector: ObjectAndSkinDetector? = null
+    private var overlayManager: AccessibilityBlockOverlayManager? = null
 
     @Volatile
     private var cachedBlockedApps: Set<String> = emptySet()
@@ -86,6 +88,7 @@ class FilterAccessibilityService : AccessibilityService() {
         db = PureGuardDatabase.getInstance(applicationContext)
         prefs = PreferencesManager(applicationContext)
         powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        overlayManager = AccessibilityBlockOverlayManager(this, serviceScope)
 
         serviceScope.launch(Dispatchers.IO) {
             nsfwClassifier = NsfwClassifier(applicationContext)
@@ -203,7 +206,11 @@ class FilterAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
                 if (isMonitoredContentPackage(pkg)) {
                     scheduleTextAndUrlScan(pkg, forceImmediate = true)
-                    visualScanTrigger.tryEmit(pkg)
+                    // Fast 250ms visual scan on new window/image opened (catches Grok or File Manager images before the user can stare or screenshot!)
+                    serviceScope.launch(Dispatchers.Default) {
+                        kotlinx.coroutines.delay(250L)
+                        performVisualAiScanIfEligible(pkg, bypassCooldownForNewWindow = true)
+                    }
                 }
             }
 
@@ -232,6 +239,7 @@ class FilterAccessibilityService : AccessibilityService() {
     private fun findMatchingKeyword(fullText: String, urlText: String): BlockedKeywordEntity? {
         val fullTextLower = fullText.lowercase()
         val urlLower = urlText.lowercase()
+        val isModerateShoppingProfile = (prefs.filterProfileLevel == PreferencesManager.PROFILE_MODERATE_SHOPPING)
 
         // Extract only continuous handle/hashtag/URL tokens (e.g. "@NUDEgirlsTongueKiss") for compact matching
         // so normal two-word sentences never glue together into false positives!
@@ -243,6 +251,12 @@ class FilterAccessibilityService : AccessibilityService() {
         for (item in cachedKeywords) {
             val kw = item.keyword.lowercase().trim()
             if (kw.isEmpty()) continue
+
+            // In Level 2 ("מותאם לנשים - קניות ואופנה פתוחים"), allow clothing/lingerie/swimwear shopping terms
+            if (isModerateShoppingProfile && SHOPPING_ALLOWED_KEYWORDS.contains(kw)) {
+                continue
+            }
+
             val compactKw = kw.replace(" ", "").replace("_", "").replace("-", "")
             if (item.isDomain) {
                 if (urlLower.contains(kw) || fullTextLower.contains(kw)) {
@@ -406,13 +420,14 @@ class FilterAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun performVisualAiScanIfEligible(pkg: String) {
+    private fun performVisualAiScanIfEligible(pkg: String, bypassCooldownForNewWindow: Boolean = false) {
         if (!powerManager.isInteractive) return
         if (prefs.isFilterPausedForTesting) return
         if (!isMonitoredContentPackage(pkg)) return
 
         val now = SystemClock.elapsedRealtime()
-        if (now - lastScreenshotElapsed < HARD_SCREENSHOT_COOLDOWN_MS) {
+        val effectiveCooldown = if (bypassCooldownForNewWindow) 650L else HARD_SCREENSHOT_COOLDOWN_MS
+        if (now - lastScreenshotElapsed < effectiveCooldown) {
             return
         }
         lastScreenshotElapsed = now
@@ -652,21 +667,14 @@ class FilterAccessibilityService : AccessibilityService() {
             )
         }
 
-        // Delay 180ms after GLOBAL_ACTION_BACK so the system Back action finishes closing the browser page
-        // BEFORE BlockOverlayActivity opens on top (prevents Back action from accidentally dismissing the red overlay!)
-        val launchDelayMs = if (navigateBack) 180L else 0L
-        mainHandler.postDelayed({
-            val intent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                putExtra(BlockOverlayActivity.EXTRA_TARGET_URL_OR_APP, targetAppOrUrl)
-                putExtra(BlockOverlayActivity.EXTRA_REASON, reason)
-                putExtra(BlockOverlayActivity.EXTRA_PAGE_TITLE, pageTitle)
-                putExtra(BlockOverlayActivity.EXTRA_TEXT_SNIPPET, textSnippet)
-                putExtra(BlockOverlayActivity.EXTRA_IS_TEXT_BLOCK, isTextBlock)
-                putExtra(BlockOverlayActivity.EXTRA_INFERENCE_MS, inferenceTimeMs)
-            }
-            startActivity(intent)
-        }, launchDelayMs)
+        // Draw universal TYPE_ACCESSIBILITY_OVERLAY directly on top of all apps (works 100% on Xiaomi, Samsung, Pixel, etc.)
+        overlayManager?.showBlockOverlay(
+            targetUrlOrApp = targetAppOrUrl,
+            blockReason = reason,
+            pageTitle = pageTitle,
+            textSnippet = textSnippet,
+            isTextBlock = isTextBlock
+        )
     }
 
     private fun showDebugToastIfEnabled(message: String) {
@@ -896,6 +904,7 @@ class FilterAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        overlayManager?.dismissOverlayImmediate()
         serviceScope.cancel()
         screenshotExecutor.shutdownNow()
         nsfwClassifier?.close()
@@ -909,6 +918,30 @@ class FilterAccessibilityService : AccessibilityService() {
         private const val TEXT_SCAN_THROTTLE_MS = 550L
         private const val DEBOUNCE_VISUAL_SCAN_MS = 950L
         private const val HARD_SCREENSHOT_COOLDOWN_MS = 2500L
+
+        val SHOPPING_ALLOWED_KEYWORDS = setOf(
+            "bikini",
+            "lingerie",
+            "lace-bra",
+            "lace bra",
+            "sheer bra",
+            "transparent bra",
+            "see-through",
+            "see through bra",
+            "panties",
+            "cleavage",
+            "thong",
+            "g-string",
+            "ביקיני",
+            "בביקיני",
+            "הלבשה תחתונה",
+            "חזיה שקופה",
+            "חזייה שקופה",
+            "בחזיה",
+            "בתחתונים",
+            "חוטיני",
+            "בחוטיני"
+        )
 
         val BROWSER_PACKAGES = setOf(
             "com.android.chrome",
