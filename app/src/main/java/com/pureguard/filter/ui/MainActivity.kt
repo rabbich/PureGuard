@@ -255,6 +255,11 @@ class MainActivity : AppCompatActivity() {
             prefs.blockYoutubeShortsAndReels = isChecked
         }
 
+        binding.switchBlockIncognito.isChecked = prefs.blockIncognitoMode
+        binding.switchBlockIncognito.setOnCheckedChangeListener { _, isChecked ->
+            prefs.blockIncognitoMode = isChecked
+        }
+
         binding.switchEnforceSafeSearch.isChecked = prefs.enforceSafeSearchAndRestrictedMode
         binding.switchEnforceSafeSearch.setOnCheckedChangeListener { _, isChecked ->
             prefs.enforceSafeSearchAndRestrictedMode = isChecked

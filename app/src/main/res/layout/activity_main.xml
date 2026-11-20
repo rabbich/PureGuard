@@ -542,6 +542,15 @@
                         android:textSize="14sp" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchBlockIncognito"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:checked="true"
+                        android:text="חסום 'גלישה בסתר' (Incognito) בדפדפנים – חובה לסינון תמונות"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchEnforceSafeSearch"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

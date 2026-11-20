@@ -43,6 +43,10 @@ class PreferencesManager(context: Context) {
         get() = prefs.getBoolean(KEY_BLOCK_SHORTS_REELS, true)
         set(value) = prefs.edit().putBoolean(KEY_BLOCK_SHORTS_REELS, value).apply()
 
+    var blockIncognitoMode: Boolean
+        get() = prefs.getBoolean(KEY_BLOCK_INCOGNITO_MODE, true)
+        set(value) = prefs.edit().putBoolean(KEY_BLOCK_INCOGNITO_MODE, value).apply()
+
     var enforceSafeSearchAndRestrictedMode: Boolean
         get() = prefs.getBoolean(KEY_ENFORCE_SAFESEARCH, true)
         set(value) = prefs.edit().putBoolean(KEY_ENFORCE_SAFESEARCH, value).apply()
@@ -82,6 +86,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_SETUP_WIZARD_COMPLETED = "is_setup_wizard_completed"
         private const val KEY_FILTER_PROFILE_LEVEL = "filter_profile_level"
         private const val KEY_BLOCK_SHORTS_REELS = "block_youtube_shorts_and_reels"
+        private const val KEY_BLOCK_INCOGNITO_MODE = "block_incognito_mode"
 
         const val PROFILE_STRICT = 0
         const val PROFILE_MODERATE_SHOPPING = 1

@@ -24,6 +24,8 @@ import com.pureguard.filter.data.BlockedAppEntity
 import com.pureguard.filter.data.BlockedKeywordEntity
 import com.pureguard.filter.data.PreferencesManager
 import com.pureguard.filter.data.PureGuardDatabase
+import com.pureguard.filter.data.TrustedSafeDomains
+import com.pureguard.filter.data.Ut1LingerieDomainFilter
 import com.pureguard.filter.ui.AccessibilityBlockOverlayManager
 import com.pureguard.filter.ui.BlockOverlayActivity
 import kotlinx.coroutines.CoroutineScope
@@ -52,6 +54,7 @@ class FilterAccessibilityService : AccessibilityService() {
     private var ocrScanner: ScreenOcrScanner? = null
     private var objectAndSkinDetector: ObjectAndSkinDetector? = null
     private var overlayManager: AccessibilityBlockOverlayManager? = null
+    private var ut1LingerieFilter: Ut1LingerieDomainFilter? = null
 
     @Volatile
     private var cachedBlockedApps: Set<String> = emptySet()
@@ -94,6 +97,7 @@ class FilterAccessibilityService : AccessibilityService() {
             nsfwClassifier = NsfwClassifier(applicationContext)
             ocrScanner = ScreenOcrScanner()
             objectAndSkinDetector = ObjectAndSkinDetector()
+            ut1LingerieFilter = Ut1LingerieDomainFilter(applicationContext)
         }
 
         // Observe Room DB changes into in-memory caches for <0.5% battery zero-lag checks
@@ -232,7 +236,9 @@ class FilterAccessibilityService : AccessibilityService() {
      * Excludes safe utility/messaging apps (WhatsApp, Waze, Dialer, Settings, Launcher).
      */
     private fun isMonitoredContentPackage(pkg: String): Boolean {
-        if (WHITELIST_SAFE_PACKAGES.contains(pkg)) return false
+        if (WHITELIST_SAFE_PACKAGES.contains(pkg) || TrustedSafeDomains.SAFE_UTILITY_PACKAGES.contains(pkg)) {
+            return false
+        }
         return true // Monitor ANY non-whitelisted app (Browsers, YouTube, X.com, Facebook, Instagram, Telegram, Gallery, etc.)
     }
 
@@ -254,6 +260,20 @@ class FilterAccessibilityService : AccessibilityService() {
 
             // In Level 2 ("מותאם לנשים - קניות ואופנה פתוחים"), allow clothing/lingerie/swimwear shopping terms
             if (isModerateShoppingProfile && SHOPPING_ALLOWED_KEYWORDS.contains(kw)) {
+                continue
+            }
+
+            // Word-boundary check for short sensitive words ("סקס", "sex") so "סקסופון" / "unisex" are never falsely blocked
+            if (kw == "סקס") {
+                if (HEBREW_SEX_WORD_REGEX.containsMatchIn(fullTextLower)) {
+                    return item
+                }
+                continue
+            }
+            if (kw == "sex") {
+                if (ENGLISH_SEX_WORD_REGEX.containsMatchIn(fullTextLower)) {
+                    return item
+                }
                 continue
             }
 
@@ -322,9 +342,47 @@ class FilterAccessibilityService : AccessibilityService() {
                     if (extracted.pageTitle.isNotBlank()) "$targetPkg (${extracted.pageTitle.take(35)})" else targetPkg
                 }
 
+                // CRITICAL SECURITY FIX: Block Incognito / Private Browsing tabs!
+                // Incognito sets Android FLAG_SECURE which blacks out screenshots and blinds Visual AI.
+                if (prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(targetPkg) && extracted.isIncognitoActive) {
+                    val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                    triggerBlockOverlay(
+                        targetAppOrUrl = targetPkg,
+                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא מונעת את פעולת סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                        pageTitle = "גלישה בסתר",
+                        textSnippet = "",
+                        isTextBlock = false,
+                        inferenceTimeMs = elapsedMs,
+                        navigateBack = true
+                    )
+                    return@launch
+                }
+
+                // Trusted Kosher, Banking, Health, Government & Productivity Whitelist (0% battery + 100% privacy)
+                if (TrustedSafeDomains.isTrustedSafeUrl(extracted.url)) {
+                    continue
+                }
+
+                // UT1 Open-Source Lingerie & Swimwear Domain Filter (active in Strict/Custom profiles; bypassed in Women's Shopping profile)
+                if (prefs.filterProfileLevel != PreferencesManager.PROFILE_MODERATE_SHOPPING) {
+                    val matchedLingerieDomain = ut1LingerieFilter?.findBlockedDomain(extracted.url)
+                    if (matchedLingerieDomain != null) {
+                        val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                        triggerBlockOverlay(
+                            targetAppOrUrl = urlOrIdentifier,
+                            reason = "נחסם ($matchedLingerieDomain): אתר הלבשה תחתונה/בגדי ים (מאגר UT1) חסום בפרופיל שמירת עיניים",
+                            pageTitle = matchedLingerieDomain,
+                            textSnippet = "",
+                            isTextBlock = false,
+                            inferenceTimeMs = elapsedMs,
+                            navigateBack = true
+                        )
+                        return@launch
+                    }
+                }
+
                 if (db.temporaryWhitelistDao().isWhitelisted(targetPkg) ||
-                    db.temporaryWhitelistDao().isWhitelisted(urlOrIdentifier) ||
-                    extracted.url.contains("antigravity.google.com", ignoreCase = true)
+                    db.temporaryWhitelistDao().isWhitelisted(urlOrIdentifier)
                 ) {
                     continue
                 }
@@ -446,6 +504,18 @@ class FilterAccessibilityService : AccessibilityService() {
 
                         override fun onFailure(errorCode: Int) {
                             Log.d(TAG, "takeScreenshot skipped/failed with errorCode=$errorCode")
+                            // Error code 5 (ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) on a browser means FLAG_SECURE (Incognito)
+                            if (errorCode == 5 && prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
+                                triggerBlockOverlay(
+                                    targetAppOrUrl = pkg,
+                                    reason = "נחסם: גלישה בסתר / חלון מאובטח חסום כיוון שהוא מונע את פעולת סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                                    pageTitle = "גלישה בסתר",
+                                    textSnippet = "",
+                                    isTextBlock = false,
+                                    inferenceTimeMs = 0L,
+                                    navigateBack = true
+                                )
+                            }
                         }
                     }
                 )
@@ -512,9 +582,29 @@ class FilterAccessibilityService : AccessibilityService() {
                 if (screenContext.pageTitle.isNotBlank()) "$pkg (${screenContext.pageTitle.take(30)})" else pkg
             }
 
+            // Block Incognito / FLAG_SECURE blacked-out browser screenshots immediately
+            if (prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
+                if (screenContext.isIncognitoActive || isPitchBlackSecureBrowserFrame(softwareBitmap)) {
+                    triggerBlockOverlay(
+                        targetAppOrUrl = pkg,
+                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא חוסמת צילום מסך ומעוורת את סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                        pageTitle = "גלישה בסתר",
+                        textSnippet = "",
+                        isTextBlock = false,
+                        inferenceTimeMs = SystemClock.elapsedRealtime() - totalStart,
+                        navigateBack = true
+                    )
+                    return
+                }
+            }
+
+            // Trusted Kosher, Banking, Health, Government & Productivity Whitelist (skip OCR & AI -> 0% battery + 100% privacy)
+            if (TrustedSafeDomains.isTrustedSafeUrl(screenContext.url)) {
+                return
+            }
+
             if (db.temporaryWhitelistDao().isWhitelisted(pkg) ||
-                db.temporaryWhitelistDao().isWhitelisted(currentIdentifier) ||
-                screenContext.url.contains("antigravity.google.com", ignoreCase = true)
+                db.temporaryWhitelistDao().isWhitelisted(currentIdentifier)
             ) {
                 return
             }
@@ -769,14 +859,56 @@ class FilterAccessibilityService : AccessibilityService() {
         val url: String,
         val pageTitle: String,
         val visibleText: String,
-        val isShortsPlayerActive: Boolean = false
+        val isShortsPlayerActive: Boolean = false,
+        val isIncognitoActive: Boolean = false
     )
+
+    /**
+     * Detects when Android SurfaceFlinger zeroes out a browser window due to FLAG_SECURE (Incognito mode).
+     * Unlike normal Dark Mode (which still has white/gray text, URL bar, and icons),
+     * a FLAG_SECURE blacked-out window renders literal RGB(0,0,0) across the entire content area.
+     */
+    private fun isPitchBlackSecureBrowserFrame(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w < 40 || h < 80) return false
+        var pureZeroCount = 0
+        var total = 0
+        for (gy in 2..11) {
+            val y = (h * gy) / 14
+            for (gx in 1..10) {
+                val x = (w * gx) / 11
+                val p = bitmap.getPixel(x, y)
+                val rgb = p and 0x00FFFFFF
+                if (rgb == 0) {
+                    pureZeroCount++
+                }
+                total++
+            }
+        }
+        return total > 0 && (pureZeroCount.toFloat() / total.toFloat()) >= 0.99f
+    }
 
     private fun extractScreenContent(root: AccessibilityNodeInfo, pkg: String): ScreenExtractedContent {
         var detectedUrl = ""
         var detectedTitle = ""
         var isShortsActive = false
+        var isIncognitoActive = false
         val textBuilder = StringBuilder()
+
+        val isBrowser = BROWSER_PACKAGES.contains(pkg)
+        if (isBrowser) {
+            for (incogId in INCOGNITO_VIEW_IDS) {
+                val nodes = root.findAccessibilityNodeInfosByViewId(incogId)
+                if (!nodes.isNullOrEmpty()) {
+                    isIncognitoActive = true
+                    nodes.forEach {
+                        try { it.recycle() } catch (_: Exception) {}
+                    }
+                    break
+                }
+            }
+        }
 
         val urlViewIds = URL_BAR_VIEW_IDS[pkg] ?: DEFAULT_URL_BAR_IDS
         for (viewId in urlViewIds) {
@@ -826,9 +958,27 @@ class FilterAccessibilityService : AccessibilityService() {
             if (viewIdRes.contains("reel_player") || viewIdRes.contains("shorts_player")) {
                 isShortsActive = true
             }
+            if (isBrowser &&
+                !viewIdRes.contains("menu", ignoreCase = true) &&
+                (viewIdRes.contains("incognito_badge", ignoreCase = true) ||
+                    viewIdRes.contains("incognito_ntp", ignoreCase = true) ||
+                    viewIdRes.contains("incognito_tabs", ignoreCase = true) ||
+                    viewIdRes.contains("private_browsing_indicator", ignoreCase = true) ||
+                    viewIdRes.contains("secret_mode_icon", ignoreCase = true))
+            ) {
+                isIncognitoActive = true
+            }
 
             // Auto-close intrusive popup ad banners (e.g. Google Ads / Taboola close buttons)
             val descLower = node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
+            if (isBrowser && !isIncognitoActive && descLower.isNotEmpty() && !descLower.contains("חדשה") && !descLower.contains("new incognito")) {
+                for (marker in INCOGNITO_DESC_MARKERS) {
+                    if (descLower.contains(marker)) {
+                        isIncognitoActive = true
+                        break
+                    }
+                }
+            }
             if (node.isClickable && (
                     descLower == "close ad" ||
                     descLower == "סגור מודעה" ||
@@ -848,6 +998,15 @@ class FilterAccessibilityService : AccessibilityService() {
             val contentDesc = node.contentDescription?.toString()?.trim().orEmpty()
 
             if (nodeText.isNotEmpty()) {
+                if (isBrowser && !isIncognitoActive) {
+                    val textLower = nodeText.lowercase()
+                    for (marker in INCOGNITO_PAGE_MARKERS) {
+                        if (textLower.contains(marker)) {
+                            isIncognitoActive = true
+                            break
+                        }
+                    }
+                }
                 if (detectedUrl.isEmpty() && looksLikeUrl(nodeText)) {
                     detectedUrl = nodeText
                 } else if (detectedTitle.isEmpty() && nodeText.length in 5..120) {
@@ -884,7 +1043,8 @@ class FilterAccessibilityService : AccessibilityService() {
             url = detectedUrl,
             pageTitle = detectedTitle,
             visibleText = textBuilder.toString().trim(),
-            isShortsPlayerActive = isShortsActive
+            isShortsPlayerActive = isShortsActive,
+            isIncognitoActive = isIncognitoActive
         )
     }
 
@@ -918,6 +1078,38 @@ class FilterAccessibilityService : AccessibilityService() {
         private const val TEXT_SCAN_THROTTLE_MS = 550L
         private const val DEBOUNCE_VISUAL_SCAN_MS = 950L
         private const val HARD_SCREENSHOT_COOLDOWN_MS = 2500L
+
+        // Word-boundary regexes for short sensitive terms so "סקסופון" or "unisex" are NOT falsely blocked
+        private val HEBREW_SEX_WORD_REGEX = Regex("(^|[\\s\\p{Punct}])([הלבמוכש]?סקס)($|[\\s\\p{Punct}])")
+        private val ENGLISH_SEX_WORD_REGEX = Regex("\\bsex\\b", RegexOption.IGNORE_CASE)
+
+        private val INCOGNITO_VIEW_IDS = listOf(
+            "com.android.chrome:id/incognito_badge",
+            "com.android.chrome:id/incognito_tabs_count",
+            "com.android.chrome:id/new_tab_incognito_container",
+            "com.brave.browser:id/incognito_badge",
+            "org.mozilla.firefox:id/private_browsing_indicator",
+            "com.sec.android.app.sbrowser:id/secret_mode_icon"
+        )
+
+        private val INCOGNITO_DESC_MARKERS = listOf(
+            "כרטיסיית גלישה בסתר",
+            "מצב גלישה בסתר",
+            "סגור את כל הכרטיסיות של גלישה בסתר",
+            "incognito tab",
+            "close all incognito tabs",
+            "private browsing mode"
+        )
+
+        private val INCOGNITO_PAGE_MARKERS = listOf(
+            "עברת למצב גלישה בסתר",
+            "הפעלת גלישה בסתר",
+            "אתה גולש בסתר",
+            "you've gone incognito",
+            "you’ve gone incognito",
+            "close all incognito tabs",
+            "סגור את כל הכרטיסיות של גלישה בסתר"
+        )
 
         val SHOPPING_ALLOWED_KEYWORDS = setOf(
             "bikini",

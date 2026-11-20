@@ -49,15 +49,14 @@ abstract class PureGuardDatabase : RoomDatabase() {
                     .build()
                 INSTANCE = instance
                 CoroutineScope(Dispatchers.IO).launch {
-                    if (instance.blockedKeywordsDao().count() < 30) {
-                        seedDefaultKeywords(instance)
-                    }
+                    seedDefaultKeywords(instance)
                 }
                 instance
             }
         }
 
         private suspend fun seedDefaultKeywords(db: PureGuardDatabase) {
+            val existingLower = db.blockedKeywordsDao().getAll().map { it.keyword.lowercase().trim() }.toSet()
             val defaults = listOf(
                 // Explicit Adult Domains
                 BlockedKeywordEntity(keyword = "pornhub.com", isDomain = true),
@@ -73,6 +72,10 @@ abstract class PureGuardDatabase : RoomDatabase() {
 
                 // English Keywords (Explicit + Kissing + Bikini/Thong + Lingerie/Sheer + YouTube Shorts/X.com triggers)
                 BlockedKeywordEntity(keyword = "porn", isDomain = false),
+                BlockedKeywordEntity(keyword = "sex", isDomain = false),
+                BlockedKeywordEntity(keyword = "topless", isDomain = false),
+                BlockedKeywordEntity(keyword = "orgasm", isDomain = false),
+                BlockedKeywordEntity(keyword = "masturbate", isDomain = false),
                 BlockedKeywordEntity(keyword = "xxx", isDomain = false),
                 BlockedKeywordEntity(keyword = "nsfw", isDomain = false),
                 BlockedKeywordEntity(keyword = "hentai", isDomain = false),
@@ -116,6 +119,16 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "camgirl", isDomain = false),
 
                 // Hebrew Keywords (Explicit + Kissing + Bikini/Thong + Lingerie/Immodest)
+                BlockedKeywordEntity(keyword = "סקס", isDomain = false),
+                BlockedKeywordEntity(keyword = "יחסי מין", isDomain = false),
+                BlockedKeywordEntity(keyword = "אורגזמה", isDomain = false),
+                BlockedKeywordEntity(keyword = "אוננות", isDomain = false),
+                BlockedKeywordEntity(keyword = "חזה חשוף", isDomain = false),
+                BlockedKeywordEntity(keyword = "בלי חזיה", isDomain = false),
+                BlockedKeywordEntity(keyword = "בלי חזייה", isDomain = false),
+                BlockedKeywordEntity(keyword = "ללא חזיה", isDomain = false),
+                BlockedKeywordEntity(keyword = "ללא חזייה", isDomain = false),
+                BlockedKeywordEntity(keyword = "טופלס", isDomain = false),
                 BlockedKeywordEntity(keyword = "פורנו", isDomain = false),
                 BlockedKeywordEntity(keyword = "סרטים כחולים", isDomain = false),
                 BlockedKeywordEntity(keyword = "עירום", isDomain = false),
@@ -144,7 +157,10 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "זנות", isDomain = false),
                 BlockedKeywordEntity(keyword = "חשפנות", isDomain = false)
             )
-            db.blockedKeywordsDao().insertAll(defaults)
+            val missing = defaults.filter { !existingLower.contains(it.keyword.lowercase().trim()) }
+            if (missing.isNotEmpty()) {
+                db.blockedKeywordsDao().insertAll(missing)
+            }
         }
     }
 }

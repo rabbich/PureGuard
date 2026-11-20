@@ -4,6 +4,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
@@ -48,6 +49,7 @@ class LockdownManager(private val context: Context) {
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
                 applyPrivateDnsLock("family.adguard-dns.com")
+                applyChromeManagedRestrictions(enable = true)
             }
             Result.success(Unit)
         } catch (e: Exception) {
@@ -102,11 +104,33 @@ class LockdownManager(private val context: Context) {
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
+                applyChromeManagedRestrictions(enable = false)
             }
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear production lockdown", e)
             Result.failure(e)
+        }
+    }
+
+    private fun applyChromeManagedRestrictions(enable: Boolean) {
+        if (!isDeviceOwner()) return
+        try {
+            val restrictions = if (enable) {
+                Bundle().apply {
+                    // 1 = Incognito mode completely disabled inside Chrome itself
+                    putInt("IncognitoModeAvailability", 1)
+                    // Force Google SafeSearch natively inside Chrome
+                    putBoolean("ForceGoogleSafeSearch", true)
+                    // 2 = Strict YouTube Restricted Mode enforced natively inside Chrome
+                    putInt("ForceYouTubeRestrict", 2)
+                }
+            } else {
+                Bundle()
+            }
+            dpm.setApplicationRestrictions(adminComponent, "com.android.chrome", restrictions)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to apply Chrome managed restrictions: ${e.message}")
         }
     }
 
