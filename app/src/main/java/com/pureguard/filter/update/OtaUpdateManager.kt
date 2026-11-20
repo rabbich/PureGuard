@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,6 +94,11 @@ class OtaUpdateManager(private val context: Context) {
     private fun launchPackageInstaller(apkFile: File) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!context.packageManager.canRequestPackageInstalls()) {
+                Toast.makeText(
+                    context,
+                    "אשר התקנת אפליקציות לא מוכרות עבור Kodeshield ולחץ שוב על עדכון",
+                    Toast.LENGTH_LONG
+                ).show()
                 val permIntent = Intent(
                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:${context.packageName}")
@@ -100,6 +106,7 @@ class OtaUpdateManager(private val context: Context) {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(permIntent)
+                return
             }
         }
 

@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -17,6 +18,7 @@ import android.view.View
 import android.view.accessibility.AccessibilityManager
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +53,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var otaUpdateManager: OtaUpdateManager
     private val timeFormatter = SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault())
 
+    private var isWizardActive = false
+    private var currentWizardStep = 1
+    private var wasServiceEnabledLastCheck = false
+    private var cachedKeywords: List<BlockedKeywordEntity> = emptyList()
+    private var cachedLogsCount: Int = 0
+    private var isLogsExpanded = false
+    private var isApiKeyExpanded = false
+    private var isUpdatingProfileUi = false
+
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -77,15 +88,143 @@ class MainActivity : AppCompatActivity() {
         lockdownManager = LockdownManager(this)
         otaUpdateManager = OtaUpdateManager(this)
 
+        val serviceOn = isAccessibilityServiceEnabled()
+        wasServiceEnabledLastCheck = serviceOn
+        if (!prefs.isSetupWizardCompleted || !serviceOn) {
+            isWizardActive = true
+            currentWizardStep = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
+        }
+
+        setupWizard()
         setupCard1FilterStatus()
         setupCard2KeywordsAppsAndSliders()
         setupCard3BlockLogs()
         setupCard4LockdownControl()
+        renderWizardVisibilityAndStep()
     }
 
     override fun onResume() {
         super.onResume()
         refreshServiceAndLockdownStatus()
+    }
+
+    private fun setupWizard() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            binding.tvWizardStep1Note.text =
+                "במכשיר זה (מתחת לאנדרואיד 13) אין חסימת 'הגדרות מוגבלות' – ניתן לעבור ישירות לשלב הבא."
+        }
+
+        binding.btnWizardOpenAppInfo.setOnClickListener {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                )
+                Toast.makeText(
+                    this,
+                    "גלול למטה (או תפריט 3 נקודות) ולחץ 'אפשר הגדרות מוגבלות'",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            }
+        }
+
+        binding.btnWizardOpenAccessibility.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            binding.btnWizardAndroid10Vision.visibility = View.VISIBLE
+            binding.btnWizardAndroid10Vision.setOnClickListener {
+                launchAndroid10ScreenCapture()
+            }
+        }
+
+        binding.btnWizardPrivateDns.setOnClickListener {
+            openPrivateDnsDialog()
+        }
+
+        binding.rgWizardProfile.setOnCheckedChangeListener { _, checkedId ->
+            if (isUpdatingProfileUi) return@setOnCheckedChangeListener
+            val level = if (checkedId == binding.rbWizardProfileModerate.id) {
+                PreferencesManager.PROFILE_MODERATE_SHOPPING
+            } else {
+                PreferencesManager.PROFILE_STRICT
+            }
+            applyProfileSelection(level, showToast = false)
+        }
+
+        binding.btnWizardPrev.setOnClickListener {
+            if (currentWizardStep > 1) {
+                currentWizardStep--
+                renderWizardVisibilityAndStep()
+            }
+        }
+
+        binding.btnWizardNext.setOnClickListener {
+            if (currentWizardStep < 4) {
+                currentWizardStep++
+                renderWizardVisibilityAndStep()
+            } else {
+                val chosenLevel = if (binding.rbWizardProfileModerate.isChecked) {
+                    PreferencesManager.PROFILE_MODERATE_SHOPPING
+                } else {
+                    PreferencesManager.PROFILE_STRICT
+                }
+                applyProfileSelection(chosenLevel, showToast = false)
+                prefs.isSetupWizardCompleted = true
+                isWizardActive = false
+                renderWizardVisibilityAndStep()
+                Toast.makeText(this, "הגדרות מגן הקודש נשמרו בהצלחה! 🛡️", Toast.LENGTH_LONG).show()
+            }
+        }
+
+        binding.btnWizardSkip.setOnClickListener {
+            isWizardActive = false
+            prefs.isSetupWizardCompleted = true
+            renderWizardVisibilityAndStep()
+        }
+
+        binding.btnOpenWizard.setOnClickListener {
+            isWizardActive = true
+            currentWizardStep = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
+            renderWizardVisibilityAndStep()
+            refreshServiceAndLockdownStatus()
+        }
+    }
+
+    private fun renderWizardVisibilityAndStep() {
+        if (!isWizardActive) {
+            binding.layoutWizardContainer.visibility = View.GONE
+            binding.layoutDashboardContainer.visibility = View.VISIBLE
+            return
+        }
+
+        binding.layoutWizardContainer.visibility = View.VISIBLE
+        binding.layoutDashboardContainer.visibility = View.GONE
+
+        binding.tvWizardStepIndicator.text = "שלב $currentWizardStep מתוך 4"
+        binding.progressWizard.progress = currentWizardStep
+
+        binding.wizardStep1.visibility = if (currentWizardStep == 1) View.VISIBLE else View.GONE
+        binding.wizardStep2.visibility = if (currentWizardStep == 2) View.VISIBLE else View.GONE
+        binding.wizardStep3.visibility = if (currentWizardStep == 3) View.VISIBLE else View.GONE
+        binding.wizardStep4.visibility = if (currentWizardStep == 4) View.VISIBLE else View.GONE
+
+        binding.btnWizardPrev.visibility = if (currentWizardStep > 1) View.VISIBLE else View.INVISIBLE
+        binding.btnWizardNext.text = if (currentWizardStep == 4) "סיום והפעלת הגנה ✓" else "הבא ←"
+
+        if (currentWizardStep == 4) {
+            isUpdatingProfileUi = true
+            if (prefs.filterProfileLevel == PreferencesManager.PROFILE_MODERATE_SHOPPING) {
+                binding.rbWizardProfileModerate.isChecked = true
+            } else {
+                binding.rbWizardProfileStrict.isChecked = true
+            }
+            isUpdatingProfileUi = false
+        }
     }
 
     private fun setupCard1FilterStatus() {
@@ -131,6 +270,11 @@ class MainActivity : AppCompatActivity() {
             prefs.showDebugToast = isChecked
         }
 
+        binding.btnToggleApiKeySection.setOnClickListener {
+            isApiKeyExpanded = !isApiKeyExpanded
+            binding.containerApiKey.visibility = if (isApiKeyExpanded) View.VISIBLE else View.GONE
+        }
+
         binding.etGeminiApiKey.setText(prefs.geminiApiKey)
         binding.btnSaveApiKey.setOnClickListener {
             prefs.geminiApiKey = binding.etGeminiApiKey.text?.toString().orEmpty()
@@ -144,98 +288,66 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             binding.btnEnableAndroid10Vision.visibility = View.VISIBLE
             binding.btnEnableAndroid10Vision.setOnClickListener {
-                val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
+                launchAndroid10ScreenCapture()
             }
         }
 
         binding.btnPrivateDnsGuide.setOnClickListener {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Private DNS", "family.adguard-dns.com"))
-
-            AlertDialog.Builder(this)
-                .setTitle("חסימת פרסומות + סינון משפחתי (0% סוללה)")
-                .setMessage(
-                    "הכתובת family.adguard-dns.com הועתקה ללוח!\n" +
-                        "כתובת זו חוסמת את כל הפרסומות באתרים ובאפליקציות (כולל באנרים של ספרים/טאבולה/גוגל) + אתרי מבוגרים + כופה חיפוש בטוח.\n\n" +
-                        "1. לחץ על 'פתח הגדרות חיבורים'\n" +
-                        "2. בחר ב-'DNS פרטי' (Private DNS)\n" +
-                        "3. בחר 'שם מארח של ספק DNS פרטי' והדבק:\nfamily.adguard-dns.com"
-                )
-                .setPositiveButton("פתח הגדרות חיבורים") { _, _ ->
-                    try {
-                        startActivity(Intent("android.settings.WIRELESS_SETTINGS"))
-                    } catch (_: Exception) {
-                        startActivity(Intent(Settings.ACTION_SETTINGS))
-                    }
-                }
-                .setNegativeButton("סגור", null)
-                .show()
+            openPrivateDnsDialog()
         }
     }
 
-    private fun setupCard2KeywordsAppsAndSliders() {
-        var isUpdatingSlidersProgrammatically = false
+    private fun launchAndroid10ScreenCapture() {
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
+    }
 
-        fun syncProfileRadioSelection() {
-            when (prefs.filterProfileLevel) {
-                PreferencesManager.PROFILE_STRICT -> binding.rbProfileStrict.isChecked = true
-                PreferencesManager.PROFILE_MODERATE_SHOPPING -> binding.rbProfileModerateShopping.isChecked = true
-                else -> binding.rbProfileCustom.isChecked = true
+    private fun openPrivateDnsDialog() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Private DNS", ADGUARD_FAMILY_DNS))
+
+        AlertDialog.Builder(this)
+            .setTitle("חסימת פרסומות + סינון משפחתי (0% סוללה)")
+            .setMessage(
+                "הכתובת $ADGUARD_FAMILY_DNS הועתקה ללוח!\n" +
+                    "כתובת זו חוסמת את כל הפרסומות באתרים ובאפליקציות (כולל באנרים של ספרים/טאבולה/גוגל) + אתרי מבוגרים + כופה חיפוש בטוח.\n\n" +
+                    "1. לחץ על 'פתח הגדרות חיבורים'\n" +
+                    "2. בחר ב-'DNS פרטי' (Private DNS)\n" +
+                    "3. בחר 'שם מארח של ספק DNS פרטי' והדבק:\n$ADGUARD_FAMILY_DNS"
+            )
+            .setPositiveButton("פתח הגדרות חיבורים") { _, _ ->
+                try {
+                    startActivity(Intent("android.settings.WIRELESS_SETTINGS"))
+                } catch (_: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
             }
-        }
+            .setNegativeButton("סגור", null)
+            .show()
+    }
 
-        syncProfileRadioSelection()
-
-        val initialPornPercent = (prefs.pornThreshold * 100).toInt().coerceIn(30, 90)
-        val initialSexyPercent = (prefs.sexyThreshold * 100).toInt().coerceIn(30, 90)
-
-        binding.sliderPornThreshold.value = initialPornPercent.toFloat()
-        binding.tvPornThresholdLabel.text = "רגישות סף Porn: ${initialPornPercent}%"
-
-        binding.sliderSexyThreshold.value = initialSexyPercent.toFloat()
-        binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: ${initialSexyPercent}%"
+    private fun setupCard2KeywordsAppsAndSliders() {
+        syncProfileAndSlidersUi()
 
         binding.rgFilterProfile.setOnCheckedChangeListener { _, checkedId ->
-            if (isUpdatingSlidersProgrammatically) return@setOnCheckedChangeListener
-            isUpdatingSlidersProgrammatically = true
-            when (checkedId) {
-                binding.rbProfileStrict.id -> {
-                    prefs.filterProfileLevel = PreferencesManager.PROFILE_STRICT
-                    prefs.pornThreshold = 0.30f
-                    prefs.sexyThreshold = 0.35f
-                    binding.sliderPornThreshold.value = 30f
-                    binding.sliderSexyThreshold.value = 35f
-                    binding.tvPornThresholdLabel.text = "רגישות סף Porn: 30%"
-                    binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: 35%"
-                    Toast.makeText(this, "הופעל פרופיל: שמירת עיניים מלאה (מחמיר) 🛡️", Toast.LENGTH_SHORT).show()
-                }
-                binding.rbProfileModerateShopping.id -> {
-                    prefs.filterProfileLevel = PreferencesManager.PROFILE_MODERATE_SHOPPING
-                    prefs.pornThreshold = 0.55f
-                    prefs.sexyThreshold = 0.85f
-                    binding.sliderPornThreshold.value = 55f
-                    binding.sliderSexyThreshold.value = 85f
-                    binding.tvPornThresholdLabel.text = "רגישות סף Porn: 55%"
-                    binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: 85% (קניות פתוחות)"
-                    Toast.makeText(this, "הופעל פרופיל: מותאם לנשים (קניות ואופנה פתוחים) 🛍️", Toast.LENGTH_SHORT).show()
-                }
-                binding.rbProfileCustom.id -> {
-                    prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
-                }
+            if (isUpdatingProfileUi) return@setOnCheckedChangeListener
+            val level = when (checkedId) {
+                binding.rbProfileStrict.id -> PreferencesManager.PROFILE_STRICT
+                binding.rbProfileModerateShopping.id -> PreferencesManager.PROFILE_MODERATE_SHOPPING
+                else -> PreferencesManager.PROFILE_CUSTOM
             }
-            isUpdatingSlidersProgrammatically = false
+            applyProfileSelection(level, showToast = true)
         }
 
         binding.sliderPornThreshold.addOnChangeListener { _, value, fromUser ->
             val pct = value.toInt()
             binding.tvPornThresholdLabel.text = "רגישות סף Porn: ${pct}%"
             prefs.pornThreshold = pct / 100f
-            if (fromUser && !isUpdatingSlidersProgrammatically) {
-                isUpdatingSlidersProgrammatically = true
+            if (fromUser && !isUpdatingProfileUi) {
+                isUpdatingProfileUi = true
                 prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
                 binding.rbProfileCustom.isChecked = true
-                isUpdatingSlidersProgrammatically = false
+                isUpdatingProfileUi = false
             }
         }
 
@@ -243,12 +355,16 @@ class MainActivity : AppCompatActivity() {
             val pct = value.toInt()
             binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: ${pct}%"
             prefs.sexyThreshold = pct / 100f
-            if (fromUser && !isUpdatingSlidersProgrammatically) {
-                isUpdatingSlidersProgrammatically = true
+            if (fromUser && !isUpdatingProfileUi) {
+                isUpdatingProfileUi = true
                 prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
                 binding.rbProfileCustom.isChecked = true
-                isUpdatingSlidersProgrammatically = false
+                isUpdatingProfileUi = false
             }
+        }
+
+        binding.btnManageKeywordsDialog.setOnClickListener {
+            showManageKeywordsDialog()
         }
 
         binding.btnAddKeyword.setOnClickListener {
@@ -260,6 +376,7 @@ class MainActivity : AppCompatActivity() {
                     BlockedKeywordEntity(keyword = raw, isDomain = isDomain)
                 )
                 binding.etNewKeyword.setText("")
+                Toast.makeText(this@MainActivity, "נוסף בהצלחה למאגר הסינון ✅", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -276,7 +393,8 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             db.blockedKeywordsDao().observeAll().collectLatest { keywords ->
-                renderKeywordsList(keywords)
+                cachedKeywords = keywords
+                updateKeywordsButtonLabel()
             }
         }
 
@@ -287,23 +405,106 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderKeywordsList(keywords: List<BlockedKeywordEntity>) {
-        binding.containerKeywords.removeAllViews()
-        for (item in keywords) {
-            val tv = TextView(this).apply {
-                val badge = if (item.isDomain) "[דומיין]" else "[מילה]"
-                text = "✕  $badge ${item.keyword}"
-                textSize = 14f
-                setTextColor(0xFF1E293B.toInt())
-                setPadding(16, 10, 16, 10)
-                setOnClickListener {
-                    lifecycleScope.launch {
-                        db.blockedKeywordsDao().deleteById(item.id)
-                    }
+    private fun applyProfileSelection(level: Int, showToast: Boolean) {
+        prefs.filterProfileLevel = level
+        when (level) {
+            PreferencesManager.PROFILE_STRICT -> {
+                prefs.pornThreshold = 0.30f
+                prefs.sexyThreshold = 0.35f
+                if (showToast) {
+                    Toast.makeText(this, "הופעל פרופיל: שמירת עיניים מלאה (מחמיר) 🛡️", Toast.LENGTH_SHORT).show()
                 }
             }
-            binding.containerKeywords.addView(tv)
+            PreferencesManager.PROFILE_MODERATE_SHOPPING -> {
+                prefs.pornThreshold = 0.55f
+                prefs.sexyThreshold = 0.85f
+                if (showToast) {
+                    Toast.makeText(this, "הופעל פרופיל: מותאם לנשים (קניות ואופנה פתוחים) 🛍️", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
+        syncProfileAndSlidersUi()
+    }
+
+    private fun syncProfileAndSlidersUi() {
+        isUpdatingProfileUi = true
+        when (prefs.filterProfileLevel) {
+            PreferencesManager.PROFILE_STRICT -> {
+                binding.rbProfileStrict.isChecked = true
+                binding.rbWizardProfileStrict.isChecked = true
+            }
+            PreferencesManager.PROFILE_MODERATE_SHOPPING -> {
+                binding.rbProfileModerateShopping.isChecked = true
+                binding.rbWizardProfileModerate.isChecked = true
+            }
+            else -> binding.rbProfileCustom.isChecked = true
+        }
+
+        val pornPct = (prefs.pornThreshold * 100).toInt().coerceIn(30, 90)
+        val sexyPct = (prefs.sexyThreshold * 100).toInt().coerceIn(30, 90)
+
+        binding.sliderPornThreshold.value = pornPct.toFloat()
+        binding.tvPornThresholdLabel.text = "רגישות סף Porn: ${pornPct}%"
+
+        binding.sliderSexyThreshold.value = sexyPct.toFloat()
+        binding.tvSexyThresholdLabel.text = if (prefs.filterProfileLevel == PreferencesManager.PROFILE_MODERATE_SHOPPING) {
+            "רגישות סף Sexy: ${sexyPct}% (קניות פתוחות)"
+        } else {
+            "רגישות סף Sexy: ${sexyPct}%"
+        }
+        isUpdatingProfileUi = false
+    }
+
+    private fun updateKeywordsButtonLabel() {
+        binding.btnManageKeywordsDialog.text =
+            "🔒 מאגר מילים ואתרים חסומים (${cachedKeywords.size} פריטים) – לחץ לפתיחה ועריכה"
+    }
+
+    private fun showManageKeywordsDialog() {
+        val listLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 16, 24, 16)
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("מאגר מילים ואתרים חסומים (${cachedKeywords.size})")
+            .setNegativeButton("סגור", null)
+            .create()
+
+        if (cachedKeywords.isEmpty()) {
+            val emptyTv = TextView(this).apply {
+                text = "אין פריטים במאגר."
+                textSize = 14f
+                setTextColor(0xFF546E7A.toInt())
+                setPadding(12, 16, 12, 16)
+            }
+            listLayout.addView(emptyTv)
+        } else {
+            for (item in cachedKeywords) {
+                val row = TextView(this).apply {
+                    val badge = if (item.isDomain) "[דומיין]" else "[מילה]"
+                    text = "✕  $badge ${item.keyword}"
+                    textSize = 14f
+                    setTextColor(0xFF1E293B.toInt())
+                    setPadding(12, 14, 12, 14)
+                    setOnClickListener { clickedView ->
+                        lifecycleScope.launch {
+                            db.blockedKeywordsDao().deleteById(item.id)
+                            listLayout.removeView(clickedView)
+                            dialog.setTitle("מאגר מילים ואתרים חסומים (${listLayout.childCount})")
+                            Toast.makeText(this@MainActivity, "הוסר מהמאגר", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                listLayout.addView(row)
+            }
+        }
+
+        val scrollView = ScrollView(this).apply {
+            addView(listLayout)
+        }
+        dialog.setView(scrollView)
+        dialog.show()
     }
 
     private fun renderBlockedAppsList(apps: List<BlockedAppEntity>) {
@@ -325,6 +526,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCard3BlockLogs() {
+        binding.btnToggleLogs.setOnClickListener {
+            isLogsExpanded = !isLogsExpanded
+            binding.containerBlockLogs.visibility = if (isLogsExpanded) View.VISIBLE else View.GONE
+            updateLogsToggleLabel()
+        }
+
         binding.btnClearLogs.setOnClickListener {
             lifecycleScope.launch {
                 db.blockLogsDao().clearAll()
@@ -338,7 +545,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateLogsToggleLabel() {
+        binding.btnToggleLogs.text = if (isLogsExpanded) {
+            "🙈 הסתר יומן חסימות אחרונות ($cachedLogsCount אירועים)"
+        } else {
+            "📋 הצג יומן חסימות אחרונות ($cachedLogsCount אירועים)"
+        }
+    }
+
     private fun renderBlockLogs(logs: List<BlockLogEntity>) {
+        cachedLogsCount = logs.size
+        updateLogsToggleLabel()
         binding.containerBlockLogs.removeAllViews()
         if (logs.isEmpty()) {
             val emptyTv = TextView(this).apply {
@@ -423,7 +640,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Cooldown completed (remainingMs == 0L) -> Show Tanya Chapter 41 manual typing challenge (no copy/paste)
         showTanyaTypingChallengeDialog()
     }
 
@@ -461,14 +677,59 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun getConfiguredPrivateDnsHost(): String? {
+        return try {
+            val mode = Settings.Global.getString(contentResolver, "private_dns_mode")
+            val specifier = Settings.Global.getString(contentResolver, "private_dns_specifier")
+            if (mode == "hostname" && !specifier.isNullOrBlank()) specifier else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun refreshServiceAndLockdownStatus() {
         val isServiceEnabled = isAccessibilityServiceEnabled()
+
+        if (isWizardActive && currentWizardStep == 2 && isServiceEnabled && !wasServiceEnabledLastCheck) {
+            currentWizardStep = 3
+            Toast.makeText(this, "מעולה! שירות הנגישות של מגן הקודש הופעל ✅", Toast.LENGTH_LONG).show()
+            renderWizardVisibilityAndStep()
+        }
+        wasServiceEnabledLastCheck = isServiceEnabled
+
         if (isServiceEnabled) {
-            binding.tvAccessibilityStatus.text = "שירות נגישות (FilterAccessibilityService): פעיל ✅"
+            binding.tvAccessibilityStatus.text = "שירות נגישות (Kodeshield – מגן הקודש): פעיל ✅"
             binding.tvAccessibilityStatus.setTextColor(0xFF2E7D32.toInt())
+            binding.btnOpenAccessibility.visibility = View.GONE
+            binding.tvWizardStep2Status.text = "סטטוס נוכחי: שירות הנגישות פעיל ✅"
+            binding.tvWizardStep2Status.setTextColor(0xFF2E7D32.toInt())
+            binding.tvWizardStep2Status.setBackgroundColor(0xFFE8F5E9.toInt())
         } else {
-            binding.tvAccessibilityStatus.text = "שירות נגישות: כבוי ⚠️ (לחץ על הכפתור למטה להפעלה)"
+            binding.tvAccessibilityStatus.text = "שירות נגישות (Kodeshield – מגן הקודש): כבוי ⚠️"
             binding.tvAccessibilityStatus.setTextColor(0xFFC62828.toInt())
+            binding.btnOpenAccessibility.visibility = View.VISIBLE
+            binding.tvWizardStep2Status.text = "סטטוס נוכחי: שירות הנגישות כבוי ⏳"
+            binding.tvWizardStep2Status.setTextColor(0xFFC62828.toInt())
+            binding.tvWizardStep2Status.setBackgroundColor(0xFFFFEBEE.toInt())
+        }
+
+        val dnsHost = getConfiguredPrivateDnsHost()
+        if (dnsHost != null) {
+            val isAdGuard = dnsHost.equals(ADGUARD_FAMILY_DNS, ignoreCase = true)
+            val dnsMsg = if (isAdGuard) {
+                "DNS פרטי: מוגדר ($dnsHost) ✅"
+            } else {
+                "DNS פרטי: מוגדר ($dnsHost)"
+            }
+            binding.tvPrivateDnsStatus.text = dnsMsg
+            binding.tvPrivateDnsStatus.setTextColor(0xFF2E7D32.toInt())
+            binding.tvWizardStep3Status.text = "סטטוס DNS פרטי: מוגדר ($dnsHost) ✅"
+            binding.tvWizardStep3Status.setTextColor(0xFF2E7D32.toInt())
+        } else {
+            binding.tvPrivateDnsStatus.text = "DNS פרטי (חוסם פרסומות): לא מוגדר ⚠️"
+            binding.tvPrivateDnsStatus.setTextColor(0xFF546E7A.toInt())
+            binding.tvWizardStep3Status.text = "סטטוס DNS פרטי: לא מוגדר עדיין ⚠️"
+            binding.tvWizardStep3Status.setTextColor(0xFF546E7A.toInt())
         }
 
         val hasModelFile = try {
@@ -483,7 +744,7 @@ class MainActivity : AppCompatActivity() {
                 if (Android10ScreenCapturer.isReady) {
                     "מודל AI + OCR (אנדרואיד 10): פעיל ודוגם בזיכרון ✅"
                 } else {
-                    "מודל AI + OCR (אנדרואיד 10): לחץ על הכפתור למטה להפעלת לכידת מסך ⚠️"
+                    "מודל AI + OCR (אנדרואיד 10): לחץ להפעלת לכידת מסך ⚠️"
                 }
             } else {
                 "מודל AI מקומי (nsfw.tflite) + OCR: מותקן וזמין בזיכרון ✅"
@@ -532,5 +793,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return false
+    }
+
+    companion object {
+        private const val ADGUARD_FAMILY_DNS = "family.adguard-dns.com"
     }
 }

@@ -25,6 +25,10 @@ class PreferencesManager(context: Context) {
         get() = !isLockdownEnabled && prefs.getBoolean(KEY_FILTER_PAUSED_TESTING, false)
         set(value) = prefs.edit().putBoolean(KEY_FILTER_PAUSED_TESTING, value).apply()
 
+    var isSetupWizardCompleted: Boolean
+        get() = prefs.getBoolean(KEY_SETUP_WIZARD_COMPLETED, false)
+        set(value) = prefs.edit().putBoolean(KEY_SETUP_WIZARD_COMPLETED, value).apply()
+
     /**
      * Filtration Profile Level:
      * 0 = STRICT ("שמירת עיניים מלאה - מחמיר")
@@ -44,7 +48,7 @@ class PreferencesManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_ENFORCE_SAFESEARCH, value).apply()
 
     var blockUncensoredAiAndGrok: Boolean
-        get() = prefs.getBoolean(KEY_BLOCK_GROK_AI, true)
+        get() = prefs.getBoolean(KEY_BLOCK_GROK_AI, false)
         set(value) = prefs.edit().putBoolean(KEY_BLOCK_GROK_AI, value).apply()
 
     var showDebugToast: Boolean
@@ -52,11 +56,11 @@ class PreferencesManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_SHOW_DEBUG_TOAST, value).apply()
 
     var pornThreshold: Float
-        get() = prefs.getFloat(KEY_PORN_THRESHOLD, 0.55f)
+        get() = prefs.getFloat(KEY_PORN_THRESHOLD, 0.30f)
         set(value) = prefs.edit().putFloat(KEY_PORN_THRESHOLD, value.coerceIn(0.30f, 0.90f)).apply()
 
     var sexyThreshold: Float
-        get() = prefs.getFloat(KEY_SEXY_THRESHOLD, 0.65f)
+        get() = prefs.getFloat(KEY_SEXY_THRESHOLD, 0.35f)
         set(value) = prefs.edit().putFloat(KEY_SEXY_THRESHOLD, value.coerceIn(0.30f, 0.90f)).apply()
 
     var hentaiThreshold: Float
@@ -75,6 +79,7 @@ class PreferencesManager(context: Context) {
         private const val PREFS_NAME = "pureguard_prefs"
         private const val KEY_LOCKDOWN_ENABLED = "is_lockdown_enabled"
         private const val KEY_FILTER_PAUSED_TESTING = "is_filter_paused_for_testing"
+        private const val KEY_SETUP_WIZARD_COMPLETED = "is_setup_wizard_completed"
         private const val KEY_FILTER_PROFILE_LEVEL = "filter_profile_level"
         private const val KEY_BLOCK_SHORTS_REELS = "block_youtube_shorts_and_reels"
 

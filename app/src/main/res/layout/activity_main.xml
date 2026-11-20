@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F4F6F8"
+    android:background="#F0F4F8"
     android:fillViewport="true"
     android:layoutDirection="rtl">
 
@@ -13,478 +13,875 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Kodeshield Branded Header Card -->
-        <com.google.android.material.card.MaterialCardView
+        <!-- ========================================================= -->
+        <!-- 1. 4-STEP GUIDED SETUP WIZARD CONTAINER                   -->
+        <!-- ========================================================= -->
+        <LinearLayout
+            android:id="@+id/layoutWizardContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardBackgroundColor="#FFFFFF"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="4dp"
-            app:strokeColor="#C99218"
-            app:strokeWidth="1.5dp">
+            android:orientation="vertical"
+            android:visibility="gone">
 
-            <LinearLayout
+            <!-- Branded Kodeshield Wizard Header -->
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <ImageView
-                    android:layout_width="match_parent"
-                    android:layout_height="84dp"
-                    android:adjustViewBounds="true"
-                    android:contentDescription="Kodeshield – מגן הקודש"
-                    android:scaleType="fitCenter"
-                    android:src="@drawable/kodeshield_banner" />
-
-                <TextView
-                    android:id="@+id/tvModeBanner"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:background="#042B59"
-                    android:gravity="center"
-                    android:padding="8dp"
-                    android:text="מצב פעולה: בדיקות ארגז חול (Sandbox Mode – ניתן להסרה בכל עת)"
-                    android:textColor="#FFFFFF"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- CARD 1: Filter Status -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardBackgroundColor="#FFFFFF"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="3dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="1. סטטוס שירותי סינון (Filter Status)"
-                    android:textColor="#0D47A1"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvAccessibilityStatus"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="שירות נגישות: בודק..."
-                    android:textColor="#37474F"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvModelStatus"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="מודל AI ויזואלי (nsfw.tflite): בודק..."
-                    android:textColor="#546E7A"
-                    android:textSize="13sp" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchPauseFilterTesting"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:background="#FFF3E0"
-                    android:checked="false"
-                    android:padding="10dp"
-                    android:text="⏸️ השהה סינון זמנית (כפתור מהיר למצב בדיקות)"
-                    android:textColor="#E65100"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnOtaUpdate"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="🔄 בדוק והתקן עדכון גרסה מהענן (ללא כבל)" />
-
-                <TextView
-                    android:id="@+id/tvOtaStatus"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:gravity="center"
-                    android:textColor="#1565C0"
-                    android:textSize="13sp"
-                    android:visibility="gone" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnOpenAccessibility"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="הפעל שירות סינון בהגדרות נגישות" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnEnableAndroid10Vision"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="הפעל סריקת תמונות AI + OCR (לאנדרואיד 10)"
-                    android:visibility="gone" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPrivateDnsGuide"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="חסימת פרסומות ופורנו ב-DNS (family.adguard-dns.com)" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchBlockShorts"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:checked="true"
-                    android:text="חסום YouTube Shorts ו-Reels אוטומטית (יוטיוב רגיל פתוח)"
-                    android:textSize="14sp" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchEnforceSafeSearch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:checked="true"
-                    android:text="גוגל חיפוש בטוח בלבד (חסום DuckDuckGo, יאנדקס, בינג וכו')"
-                    android:textSize="14sp" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchBlockGrokAi"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:checked="true"
-                    android:text="חסום את Grok ומחוללי תמונות/צ'אט AI ללא צנזורה"
-                    android:textSize="14sp" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchDebugToast"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:checked="true"
-                    android:text="הצג חיווי בדיקות צף (Debug Toast)"
-                    android:textSize="14sp" />
+                android:layout_marginBottom="14dp"
+                app:cardBackgroundColor="#FFFFFF"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="4dp"
+                app:strokeColor="#C99218"
+                app:strokeWidth="1.5dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:orientation="horizontal">
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-                    <EditText
-                        android:id="@+id/etGeminiApiKey"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:hint="מפתח Gemini Flash API (לבדיקת הקשר)"
-                        android:inputType="textPassword"
-                        android:textSize="13sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnSaveApiKey"
-                        style="@style/Widget.Material3.Button.TonalButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="שמור" />
-                </LinearLayout>
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- CARD 2: Manage Keywords, Apps & AI Thresholds -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardBackgroundColor="#FFFFFF"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="3dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="2. רמת סינון וניהול מילים ואפליקציות"
-                    android:textColor="#0D47A1"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="בחר פרופיל רמת סינון (כמו בנטספארק):"
-                    android:textColor="#37474F"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <RadioGroup
-                    android:id="@+id/rgFilterProfile"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:orientation="vertical">
-
-                    <RadioButton
-                        android:id="@+id/rbProfileStrict"
+                    <ImageView
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:checked="true"
-                        android:text="🛡️ שמירת עיניים מלאה (מחמיר - חוסם גם הלבשה תחתונה וביקיני)"
-                        android:textSize="13sp" />
-
-                    <RadioButton
-                        android:id="@+id/rbProfileModerateShopping"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="🛍️ מותאם לנשים (קניות ואופנה פתוחים - חוסם רק עירום ופורנו)"
-                        android:textSize="13sp" />
-
-                    <RadioButton
-                        android:id="@+id/rbProfileCustom"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="⚙️ מותאם אישית (כיוון ידני של הסליידרים)"
-                        android:textSize="13sp" />
-                </RadioGroup>
-
-                <!-- Add Keyword / Domain -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:orientation="horizontal">
-
-                    <EditText
-                        android:id="@+id/etNewKeyword"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:hint="הוסף מילה אסורה או דומיין..."
-                        android:inputType="text"
-                        android:textSize="14sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAddKeyword"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="הוסף" />
-                </LinearLayout>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="מילים ודומיינים פעילים (לחץ על פריט למחיקה):"
-                    android:textColor="#546E7A"
-                    android:textSize="12sp" />
-
-                <LinearLayout
-                    android:id="@+id/containerKeywords"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:orientation="vertical" />
-
-                <!-- Add Blocked App Package -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:orientation="horizontal">
-
-                    <EditText
-                        android:id="@+id/etNewBlockedPackage"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:hint="שם חבילה לחסימה (למשל com.instagram.android)"
-                        android:inputType="text"
-                        android:textSize="13sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAddBlockedApp"
-                        style="@style/Widget.Material3.Button.TonalButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="חסום אפליקציה" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:id="@+id/containerBlockedApps"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:orientation="vertical" />
-
-                <!-- AI Threshold Sliders (30% to 90%) -->
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:layout_marginVertical="12dp"
-                    android:background="#E0E0E0" />
-
-                <TextView
-                    android:id="@+id/tvPornThresholdLabel"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="רגישות סף Porn: 55%"
-                    android:textColor="#263238"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderPornThreshold"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:stepSize="5.0"
-                    android:value="55.0"
-                    android:valueFrom="30.0"
-                    android:valueTo="90.0" />
-
-                <TextView
-                    android:id="@+id/tvSexyThresholdLabel"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="רגישות סף Sexy: 65%"
-                    android:textColor="#263238"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderSexyThreshold"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:stepSize="5.0"
-                    android:value="65.0"
-                    android:valueFrom="30.0"
-                    android:valueTo="90.0" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- CARD 3: Recent Block Log (Last 20 events) -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardBackgroundColor="#FFFFFF"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="3dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                        android:layout_height="76dp"
+                        android:adjustViewBounds="true"
+                        android:contentDescription="Kodeshield – מגן הקודש"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/kodeshield_banner" />
 
                     <TextView
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="3. יומן חסימות אחרונות (20 אחרונות)"
-                        android:textColor="#0D47A1"
+                        android:layout_marginTop="8dp"
+                        android:background="#042B59"
+                        android:gravity="center"
+                        android:padding="8dp"
+                        android:text="אשף הגדרה והפעלה ראשונית"
+                        android:textColor="#FFFFFF"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Step Indicator & Progress Bar -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:orientation="vertical"
+                android:paddingHorizontal="4dp">
+
+                <TextView
+                    android:id="@+id/tvWizardStepIndicator"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="שלב 1 מתוך 4"
+                    android:textColor="#042B59"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <ProgressBar
+                    android:id="@+id/progressWizard"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="10dp"
+                    android:layout_marginTop="6dp"
+                    android:max="4"
+                    android:progress="1"
+                    android:progressTint="#042B59" />
+            </LinearLayout>
+
+            <!-- Main Step Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                app:cardBackgroundColor="#FFFFFF"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="5dp"
+                app:strokeColor="#042B59"
+                app:strokeWidth="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="20dp">
+
+                    <!-- Wizard Step 1: Allow Restricted Settings -->
+                    <LinearLayout
+                        android:id="@+id/wizardStep1"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="שלב 1: שחרור 'הגדרות מוגבלות' (אנדרואיד 13+)"
+                            android:textColor="#042B59"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:lineSpacingExtra="4dp"
+                            android:text="באפליקציות שמותקנות מחוץ לחנות Play, אנדרואיד חוסם תחילה את מתג הנגישות.\n\n1. לחץ על הכפתור למטה לפתיחת פרטי האפליקציה.\n2. גלול עד למטה (או לחץ על 3 הנקודות למעלה משמאל).\n3. לחץ על 'אפשר הגדרות מוגבלות' ואשר, ואז חזור לכאן ועבור לשלב הבא."
+                            android:textColor="#37474F"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/tvWizardStep1Note"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:background="#FFF8E1"
+                            android:padding="10dp"
+                            android:text="טיפ: אם האפשרות 'אפשר הגדרות מוגבלות' לא מופיעה עדיין, נסה תחילה לפתוח את שירות הנגישות בשלב הבא – ואז היא תיפתח."
+                            android:textColor="#795548"
+                            android:textSize="13sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnWizardOpenAppInfo"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:backgroundTint="#042B59"
+                            android:text="1️⃣ פתח פרטי אפליקציה (אפשר הגדרות מוגבלות)"
+                            android:textColor="#FFFFFF" />
+                    </LinearLayout>
+
+                    <!-- Wizard Step 2: Enable Accessibility Service -->
+                    <LinearLayout
+                        android:id="@+id/wizardStep2"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="שלב 2: הפעלת שירות הסינון בנגישות"
+                            android:textColor="#042B59"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvWizardStep2Status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:background="#FFEBEE"
+                            android:padding="10dp"
+                            android:text="סטטוס נוכחי: שירות הנגישות כבוי ⏳"
+                            android:textColor="#C62828"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:lineSpacingExtra="4dp"
+                            android:text="1. לחץ על הכפתור הכחול למטה.\n2. היכנס ל-'אפליקציות שהורדת' (Downloaded Apps).\n3. בחר ב-'Kodeshield – מגן הקודש' והדלק את המתג.\n\nברגע שתפעיל אותו, האשף יעבור מעצמו לשלב 3!"
+                            android:textColor="#37474F"
+                            android:textSize="14sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnWizardOpenAccessibility"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:backgroundTint="#042B59"
+                            android:text="2️⃣ פתח הגדרות נגישות והפעל את Kodeshield"
+                            android:textColor="#FFFFFF" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnWizardAndroid10Vision"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="הפעל סריקת תמונות AI + OCR (לאנדרואיד 10)"
+                            android:visibility="gone" />
+                    </LinearLayout>
+
+                    <!-- Wizard Step 3: AdGuard Family Private DNS -->
+                    <LinearLayout
+                        android:id="@+id/wizardStep3"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="שלב 3: חסימת פרסומות ופורנו ב-DNS (0% סוללה)"
+                            android:textColor="#042B59"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvWizardStep3Status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:background="#F8FAFC"
+                            android:padding="10dp"
+                            android:text="סטטוס DNS פרטי: לא מוגדר עדיין ⚠️"
+                            android:textColor="#546E7A"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:lineSpacingExtra="4dp"
+                            android:text="הכתובת family.adguard-dns.com חוסמת אוטומטית ברמת הרשת את כל הפרסומות באתרים ובאפליקציות (כולל באנרים לא צנועים), חוסמת אתרי מבוגרים וכופה חיפוש בטוח – בצריכת סוללה אפסית (0%)."
+                            android:textColor="#37474F"
+                            android:textSize="14sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnWizardPrivateDns"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:backgroundTint="#042B59"
+                            android:text="3️⃣ העתק family.adguard-dns.com ופתח הגדרות DNS"
+                            android:textColor="#FFFFFF" />
+                    </LinearLayout>
+
+                    <!-- Wizard Step 4: Protection Profile -->
+                    <LinearLayout
+                        android:id="@+id/wizardStep4"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="שלב 4: בחר את רמת ההגנה שלך"
+                            android:textColor="#042B59"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <RadioGroup
+                            android:id="@+id/rgWizardProfile"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:orientation="vertical">
+
+                            <RadioButton
+                                android:id="@+id/rbWizardProfileStrict"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:checked="true"
+                                android:text="🛡️ שמירת עיניים מלאה (מחמיר – מומלץ)"
+                                android:textColor="#042B59"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginBottom="10dp"
+                                android:paddingStart="32dp"
+                                android:text="חוסם גם עירום וגם תמונות חושפניות, הלבשה תחתונה, בגדי ים ו-YouTube Shorts. רגישות AI מחמירה (30% / 35%)."
+                                android:textColor="#546E7A"
+                                android:textSize="13sp" />
+
+                            <RadioButton
+                                android:id="@+id/rbWizardProfileModerate"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="🛍️ מותאם לנשים (קניות ואופנה פתוחים)"
+                                android:textColor="#042B59"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:paddingStart="32dp"
+                                android:text="מאפשר קניות בגדים, הלבשה תחתונה ובגדי ים באתרי אופנה, וחוסם תוכן מבוגרים ופורנוגרפיה מפורשת (55% / 85%)."
+                                android:textColor="#546E7A"
+                                android:textSize="13sp" />
+                        </RadioGroup>
+                    </LinearLayout>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Wizard Navigation Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWizardPrev"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="→ הקודם" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWizardNext"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="#042B59"
+                    android:text="הבא ←"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnWizardSkip"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="דלג למסך הראשי"
+                android:textColor="#546E7A" />
+        </LinearLayout>
+
+        <!-- ========================================================= -->
+        <!-- 2. MAIN MODEST & CLEAN DASHBOARD CONTAINER                -->
+        <!-- ========================================================= -->
+        <LinearLayout
+            android:id="@+id/layoutDashboardContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="visible">
+
+            <!-- Kodeshield Branded Header Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="14dp"
+                app:cardBackgroundColor="#FFFFFF"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="4dp"
+                app:strokeColor="#C99218"
+                app:strokeWidth="1.5dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="80dp"
+                        android:adjustViewBounds="true"
+                        android:contentDescription="Kodeshield – מגן הקודש"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/kodeshield_banner" />
+
+                    <TextView
+                        android:id="@+id/tvModeBanner"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="#042B59"
+                        android:gravity="center"
+                        android:padding="8dp"
+                        android:text="מצב פעולה: בדיקות ארגז חול (Sandbox Mode – ניתן להסרה בכל עת)"
+                        android:textColor="#FFFFFF"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnOtaUpdate"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🔄 עדכן גרסה מהענן"
+                            android:textSize="13sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnOpenWizard"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="🪄 אשף התקנה"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvOtaStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:gravity="center"
+                        android:textColor="#042B59"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- CARD 1: Active Protection Status & Toggles -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardBackgroundColor="#FFFFFF"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="3dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="1. סטטוס הגנה והגדרות מהירות"
+                        android:textColor="#042B59"
                         android:textSize="17sp"
                         android:textStyle="bold" />
 
+                    <TextView
+                        android:id="@+id/tvAccessibilityStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="שירות נגישות: בודק..."
+                        android:textColor="#37474F"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnClearLogs"
+                        android:id="@+id/btnOpenAccessibility"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:backgroundTint="#042B59"
+                        android:text="הפעל שירות סינון בהגדרות נגישות"
+                        android:visibility="gone" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnEnableAndroid10Vision"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="הפעל סריקת תמונות AI + OCR (לאנדרואיד 10)"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/tvModelStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="מודל AI ויזואלי + OCR: בודק..."
+                        android:textColor="#546E7A"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/tvPrivateDnsStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="DNS פרטי (חוסם פרסומות): בודק..."
+                        android:textColor="#546E7A"
+                        android:textSize="13sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPrivateDnsGuide"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="חסימת פרסומות ופורנו ב-DNS (family.adguard-dns.com)" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchPauseFilterTesting"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="#FFF8E1"
+                        android:checked="false"
+                        android:padding="10dp"
+                        android:text="⏸️ השהה סינון זמנית (כפתור מהיר למצב בדיקות)"
+                        android:textColor="#E65100"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchBlockShorts"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:checked="true"
+                        android:text="חסום YouTube Shorts ו-Reels אוטומטית (יוטיוב רגיל פתוח)"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchEnforceSafeSearch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:checked="true"
+                        android:text="גוגל חיפוש בטוח בלבד (חסום DuckDuckGo, יאנדקס, בינג)"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchBlockGrokAi"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:checked="false"
+                        android:text="חסום כניסה ל-Grok ומחוללי AI לא מצונזרים"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchDebugToast"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:checked="true"
+                        android:text="הצג חיווי בדיקות צף (Debug Toast)"
+                        android:textSize="14sp" />
+
+                    <!-- Collapsible Optional API Key Section -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleApiKeySection"
                         style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="נקה יומן" />
+                        android:layout_marginTop="4dp"
+                        android:text="🔑 הגדרת מפתח Gemini API (אופציונלי)"
+                        android:textColor="#042B59"
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:id="@+id/containerApiKey"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <EditText
+                            android:id="@+id/etGeminiApiKey"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:hint="מפתח Gemini API (אופציונלי - עובד בחינם גם ללא מפתח)"
+                            android:inputType="textPassword"
+                            android:textSize="12sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnSaveApiKey"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="שמור" />
+                    </LinearLayout>
+
                 </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
-                <LinearLayout
-                    android:id="@+id/containerBlockLogs"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:orientation="vertical" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- CARD 4: Production Lockdown Mode (OFF by default in Sandbox Testing) -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp"
-            app:cardBackgroundColor="#FFF8E1"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="3dp">
-
-            <LinearLayout
+            <!-- CARD 2: Filter Profile Level & Modal-Only Keywords Manager (ZERO explicit words on screen) -->
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
+                android:layout_marginBottom="16dp"
+                app:cardBackgroundColor="#FFFFFF"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="3dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="4. מצב נעילה מלא (Production Lockdown)"
-                    android:textColor="#E65100"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvLockdownStatus"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="כבוי כברירת מחדל (מצב בדיקות בטוח – ניתן להסיר את האפליקציה בחופשיות)"
-                    android:textColor="#4E342E"
-                    android:textSize="13sp" />
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnToggleLockdown"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="2. פרופיל רמת סינון ומאגר חסימות"
+                        android:textColor="#042B59"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
+
+                    <RadioGroup
+                        android:id="@+id/rgFilterProfile"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="vertical">
+
+                        <RadioButton
+                            android:id="@+id/rbProfileStrict"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:checked="true"
+                            android:text="🛡️ שמירת עיניים מלאה (מחמיר - חוסם גם הלבשה תחתונה וביקיני)"
+                            android:textSize="13sp" />
+
+                        <RadioButton
+                            android:id="@+id/rbProfileModerateShopping"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="🛍️ מותאם לנשים (קניות ואופנה פתוחים - חוסם רק עירום ופורנו)"
+                            android:textSize="13sp" />
+
+                        <RadioButton
+                            android:id="@+id/rbProfileCustom"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="⚙️ מותאם אישית (כיוון ידני של הסליידרים)"
+                            android:textSize="13sp" />
+                    </RadioGroup>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginVertical="10dp"
+                        android:background="#E0E0E0" />
+
+                    <TextView
+                        android:id="@+id/tvPornThresholdLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="רגישות סף Porn: 30%"
+                        android:textColor="#263238"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/sliderPornThreshold"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:stepSize="5.0"
+                        android:value="30.0"
+                        android:valueFrom="30.0"
+                        android:valueTo="90.0" />
+
+                    <TextView
+                        android:id="@+id/tvSexyThresholdLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="רגישות סף Sexy: 35%"
+                        android:textColor="#263238"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/sliderSexyThreshold"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:stepSize="5.0"
+                        android:value="35.0"
+                        android:valueFrom="30.0"
+                        android:valueTo="90.0" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginVertical="10dp"
+                        android:background="#E0E0E0" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <EditText
+                            android:id="@+id/etNewKeyword"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:hint="הוסף מילה אסורה או אתר לחסימה..."
+                            android:inputType="text"
+                            android:textSize="14sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAddKeyword"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:backgroundTint="#042B59"
+                            android:text="הוסף" />
+                    </LinearLayout>
+
+                    <!-- Opens clean modal AlertDialog; zero explicit words rendered on Dashboard -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnManageKeywordsDialog"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="🔒 מאגר מילים ואתרים חסומים (0 פריטים) – לחץ לפתיחה ועריכה"
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:orientation="horizontal">
+
+                        <EditText
+                            android:id="@+id/etNewBlockedPackage"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:hint="שם חבילה לחסימה (למשל com.instagram.android)"
+                            android:inputType="text"
+                            android:textSize="13sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAddBlockedApp"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="חסום אפליקציה" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/containerBlockedApps"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="vertical" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- CARD 3: Recent Block Log (Collapsed by default so blocked terms stay hidden) -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardBackgroundColor="#FFFFFF"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="3dp">
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="הפעל מצב נעילה מלא (לאחר סיום הבדיקות)"
-                    android:textColor="#D84315" />
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
 
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="3. יומן חסימות אחרונות (20 אחרונות)"
+                            android:textColor="#042B59"
+                            android:textSize="17sp"
+                            android:textStyle="bold" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnClearLogs"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="נקה יומן" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleLogs"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="📋 הצג יומן חסימות אחרונות (0 אירועים)"
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:id="@+id/containerBlockLogs"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="vertical"
+                        android:visibility="gone" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- CARD 4: Production Lockdown Mode (OFF by default in Sandbox Testing) -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                app:cardBackgroundColor="#FFF8E1"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="3dp"
+                app:strokeColor="#C99218"
+                app:strokeWidth="1.5dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="4. מצב נעילה מלא (Production Lockdown)"
+                        android:textColor="#042B59"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvLockdownStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="כבוי כברירת מחדל (מצב בדיקות בטוח – ניתן להסיר את האפליקציה בחופשיות)"
+                        android:textColor="#4E342E"
+                        android:textSize="13sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleLockdown"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="הפעל מצב נעילה מלא (לאחר סיום הבדיקות)"
+                        android:textColor="#042B59"
+                        app:strokeColor="#C99218" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

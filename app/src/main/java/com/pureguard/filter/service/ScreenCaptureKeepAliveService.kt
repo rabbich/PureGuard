@@ -55,13 +55,13 @@ class ScreenCaptureKeepAliveService : Service() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             channelId,
-            "PureGuard Visual AI Guard",
+            "Kodeshield Visual AI Guard",
             NotificationManager.IMPORTANCE_LOW
         )
         nm.createNotificationChannel(channel)
 
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("PureGuard – סינון תמונות AI ו-OCR פעיל")
+            .setContentTitle("Kodeshield מגן הקודש – סינון תמונות AI פעיל")
             .setContentText("שומר על קדושת העיניים בזמן אמת (חסכוני בסוללה)")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setOngoing(true)

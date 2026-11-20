@@ -9,11 +9,11 @@ class PureGuardDeviceAdminReceiver : DeviceAdminReceiver() {
 
     override fun onEnabled(context: Context, intent: Intent) {
         super.onEnabled(context, intent)
-        Toast.makeText(context, "PureGuard: הרשאת מנהל מכשיר הופעלה", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Kodeshield מגן הקודש: הרשאת מנהל מכשיר הופעלה", Toast.LENGTH_SHORT).show()
     }
 
     override fun onDisabled(context: Context, intent: Intent) {
         super.onDisabled(context, intent)
-        Toast.makeText(context, "PureGuard: הרשאת מנהל מכשיר הוסרה", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Kodeshield מגן הקודש: הרשאת מנהל מכשיר הוסרה", Toast.LENGTH_SHORT).show()
     }
 }
