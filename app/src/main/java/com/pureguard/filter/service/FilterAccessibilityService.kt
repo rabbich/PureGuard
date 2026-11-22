@@ -1,6 +1,7 @@
 package com.pureguard.filter.service
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -17,6 +18,7 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
+import com.pureguard.filter.admin.LockdownManager
 import com.pureguard.filter.ai.NsfwClassifier
 import com.pureguard.filter.ai.ObjectAndSkinDetector
 import com.pureguard.filter.ai.ScreenOcrScanner
@@ -52,6 +54,7 @@ class FilterAccessibilityService : AccessibilityService() {
     private lateinit var db: PureGuardDatabase
     private lateinit var prefs: PreferencesManager
     private lateinit var powerManager: PowerManager
+    private lateinit var keyguardManager: KeyguardManager
     private var nsfwClassifier: NsfwClassifier? = null
     private var ocrScanner: ScreenOcrScanner? = null
     private var objectAndSkinDetector: ObjectAndSkinDetector? = null
@@ -93,7 +96,14 @@ class FilterAccessibilityService : AccessibilityService() {
         db = PureGuardDatabase.getInstance(applicationContext)
         prefs = PreferencesManager(applicationContext)
         powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         overlayManager = AccessibilityBlockOverlayManager(this, serviceScope)
+
+        // If Device Owner is enabled, natively hide/disable Incognito button inside Chrome
+        try {
+            LockdownManager(applicationContext).syncChromeIncognitoPolicy(prefs.blockIncognitoMode)
+        } catch (_: Throwable) {
+        }
 
         serviceScope.launch(Dispatchers.IO) {
             nsfwClassifier = NsfwClassifier(applicationContext)
@@ -168,16 +178,29 @@ class FilterAccessibilityService : AccessibilityService() {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
 
-        // Never inspect our own package or system UI overlays
-        if (pkg == packageName || pkg == "com.android.systemui") return
+        // Never inspect our own package, system UI, or keyboards/background services
+        if (pkg == packageName || isIgnoredSystemOrKeyboardPackage(pkg)) return
 
-        // Screen off check: zero work when screen is not interactive
-        if (!powerManager.isInteractive) return
+        // Screen off or Lock Screen check: zero work when screen is off or locked
+        if (!powerManager.isInteractive || keyguardManager.isKeyguardLocked) return
 
         // Quick 1-Click Sandbox Testing Pause Toggle (only works when isLockdownEnabled == false)
         if (prefs.isFilterPausedForTesting) return
 
-        currentForegroundPackage = pkg
+        // Verify actual visible foreground window package so background Xiaomi events never scan WhatsApp!
+        val activeRootNode = try { rootInActiveWindow } catch (_: Throwable) { null }
+        val activeWindowPkg = try {
+            activeRootNode?.packageName?.toString()
+        } finally {
+            try { activeRootNode?.recycle() } catch (_: Throwable) {}
+        }
+        if (!activeWindowPkg.isNullOrBlank() && !isMonitoredContentPackage(activeWindowPkg)) {
+            currentForegroundPackage = activeWindowPkg
+            return
+        }
+
+        val effectivePkg = if (!activeWindowPkg.isNullOrBlank()) activeWindowPkg else pkg
+        currentForegroundPackage = effectivePkg
 
         // Layer 1A: App Blocker check
         if (cachedBlockedApps.contains(pkg)) {
@@ -246,12 +269,8 @@ class FilterAccessibilityService : AccessibilityService() {
                     !evTextLower.contains("new ") &&
                     (evTextLower.contains("עברת לגלישה בסתר") ||
                         evTextLower.contains("כעת באפשרותך לגלוש באופן פרטי") ||
-                        evTextLower.contains("כרטיסיות גלישה בסתר") ||
-                        evTextLower.contains("כרטיסיית גלישה בסתר") ||
-                        evTextLower.contains("כרטיסייה אנונימית") ||
-                        evTextLower.contains("כרטיסיות אנונימיות") ||
-                        evTextLower.contains("you've gone incognito") ||
-                        evTextLower.contains("incognito tab"))
+                        evTextLower.contains("לא יישמרו ב-chrome") ||
+                        evTextLower.contains("you've gone incognito"))
 
                 if (isClickedIncognitoMenu || isActiveIncognitoEvent) {
                     triggerBlockOverlay(
@@ -271,12 +290,12 @@ class FilterAccessibilityService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
-                if (isMonitoredContentPackage(pkg)) {
-                    scheduleTextAndUrlScan(pkg, forceImmediate = true)
+                if (isMonitoredContentPackage(effectivePkg)) {
+                    scheduleTextAndUrlScan(effectivePkg, forceImmediate = true)
                     // Fast 250ms visual scan on new window/image opened (catches Grok or File Manager images before the user can stare or screenshot!)
                     serviceScope.launch(Dispatchers.Default) {
                         kotlinx.coroutines.delay(250L)
-                        performVisualAiScanIfEligible(pkg, bypassCooldownForNewWindow = true)
+                        performVisualAiScanIfEligible(effectivePkg, bypassCooldownForNewWindow = true)
                     }
                 }
             }
@@ -284,9 +303,9 @@ class FilterAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_SCROLLED,
             AccessibilityEvent.TYPE_VIEW_CLICKED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                if (isMonitoredContentPackage(pkg)) {
-                    scheduleTextAndUrlScan(pkg, forceImmediate = false)
-                    visualScanTrigger.tryEmit(pkg)
+                if (isMonitoredContentPackage(effectivePkg)) {
+                    scheduleTextAndUrlScan(effectivePkg, forceImmediate = false)
+                    visualScanTrigger.tryEmit(effectivePkg)
                 }
             }
 
@@ -294,19 +313,67 @@ class FilterAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun isIgnoredSystemOrKeyboardPackage(pkg: String): Boolean {
+        if (pkg == "com.android.systemui" ||
+            pkg.contains("inputmethod") ||
+            pkg.contains("keyboard") ||
+            pkg.contains("honeyboard") ||
+            pkg.contains("swiftkey") ||
+            pkg == "com.miui.securitycenter" ||
+            pkg == "com.miui.powerkeeper" ||
+            pkg == "com.miui.notification" ||
+            pkg == "com.miui.home" ||
+            pkg == "com.miui.aod" ||
+            pkg == "com.miui.systemAdSolution"
+        ) {
+            return true
+        }
+        return false
+    }
+
     /**
-     * Checks if package should be scanned for text/keywords, OCR AND visual AI screenshots.
-     * Excludes safe utility/messaging apps (WhatsApp, Waze, Dialer, Settings, Launcher).
+     * Focused Content-App Architecture:
+     * Scans ONLY actual browsers, video apps, social media, and galleries/file managers.
+     * NEVER scans WhatsApp, Trello, ChatGPT, system services, keyboards, or productivity tools!
      */
     private fun isMonitoredContentPackage(pkg: String): Boolean {
+        if (pkg.isBlank() || pkg == packageName || isIgnoredSystemOrKeyboardPackage(pkg)) {
+            return false
+        }
         if (WHITELIST_SAFE_PACKAGES.contains(pkg) || TrustedSafeDomains.SAFE_UTILITY_PACKAGES.contains(pkg)) {
             return false
         }
-        return true // Monitor ANY non-whitelisted app (Browsers, YouTube, X.com, Facebook, Instagram, Telegram, Gallery, etc.)
+        if (BROWSER_PACKAGES.contains(pkg) || MONITORED_CONTENT_PACKAGES.contains(pkg)) {
+            return true
+        }
+        val p = pkg.lowercase()
+        return p.contains("browser") ||
+            p.contains("chrome") ||
+            p.contains("firefox") ||
+            p.contains("opera") ||
+            p.contains("brave") ||
+            p.contains("youtube") ||
+            p.contains("telegram") ||
+            p.contains("twitter") ||
+            p.contains("instagram") ||
+            p.contains("facebook") ||
+            p.contains("tiktok") ||
+            p.contains("musically") ||
+            p.contains("trill") ||
+            p.contains("reddit") ||
+            p.contains("gallery") ||
+            p.contains("photos") ||
+            p.contains("fileexplorer") ||
+            p.contains("filemanager") ||
+            p.contains("documentsui") ||
+            p.contains("videoplayer") ||
+            p.contains("vlc") ||
+            p.contains("grok")
     }
 
     private fun findMatchingKeyword(fullText: String, urlText: String): BlockedKeywordEntity? {
-        val fullTextLower = fullText.lowercase()
+        // Strip out Kodeshield's own diagnostic score pattern ("Porn: 65%", "Sexy: 2%") so logs never self-block!
+        val fullTextLower = fullText.lowercase().replace(DIAGNOSTIC_LOG_SCORE_REGEX, " ")
         val urlLower = urlText.lowercase()
         val isModerateShoppingProfile = (prefs.filterProfileLevel == PreferencesManager.PROFILE_MODERATE_SHOPPING)
 
@@ -583,9 +650,17 @@ class FilterAccessibilityService : AccessibilityService() {
     }
 
     private fun performVisualAiScanIfEligible(pkg: String, bypassCooldownForNewWindow: Boolean = false) {
-        if (!powerManager.isInteractive) return
+        if (!powerManager.isInteractive || keyguardManager.isKeyguardLocked) return
         if (prefs.isFilterPausedForTesting) return
-        if (!isMonitoredContentPackage(pkg)) return
+
+        val activeRoot = try { rootInActiveWindow } catch (_: Throwable) { null }
+        val activeWinPkg = try {
+            activeRoot?.packageName?.toString()
+        } finally {
+            try { activeRoot?.recycle() } catch (_: Throwable) {}
+        }
+        val targetPkg = if (!activeWinPkg.isNullOrBlank()) activeWinPkg else pkg
+        if (!isMonitoredContentPackage(targetPkg)) return
 
         val now = SystemClock.elapsedRealtime()
         val effectiveCooldown = if (bypassCooldownForNewWindow) 650L else HARD_SCREENSHOT_COOLDOWN_MS
@@ -669,7 +744,13 @@ class FilterAccessibilityService : AccessibilityService() {
             val totalStart = SystemClock.elapsedRealtime()
 
             // Check if current app or URL is already in the temporary whitelist (from 15-min Sandbox Bypass or 24h AI Approval)
+            if (keyguardManager.isKeyguardLocked) return
             val rootNodeForContext = rootInActiveWindow
+            val actualRootPkg = rootNodeForContext?.packageName?.toString().orEmpty()
+            if (actualRootPkg.isNotBlank() && !isMonitoredContentPackage(actualRootPkg)) {
+                try { rootNodeForContext?.recycle() } catch (_: Exception) {}
+                return
+            }
             val screenContext = try {
                 if (rootNodeForContext != null) extractScreenContent(rootNodeForContext, pkg)
                 else ScreenExtractedContent("", "", "")
@@ -1076,14 +1157,6 @@ class FilterAccessibilityService : AccessibilityService() {
             if (viewIdRes.contains("reel_player") || viewIdRes.contains("shorts_player")) {
                 isShortsActive = true
             }
-            if (isBrowser &&
-                !viewIdRes.contains("menu", ignoreCase = true) &&
-                (viewIdRes.contains("incognito", ignoreCase = true) ||
-                    viewIdRes.contains("private_browsing", ignoreCase = true) ||
-                    viewIdRes.contains("secret_mode", ignoreCase = true))
-            ) {
-                isIncognitoActive = true
-            }
 
             // Auto-close intrusive popup ad banners (e.g. Google Ads / Taboola close buttons)
             val descLower = node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
@@ -1116,14 +1189,10 @@ class FilterAccessibilityService : AccessibilityService() {
             if (nodeText.isNotEmpty()) {
                 if (isBrowser && !isIncognitoActive) {
                     val textLower = nodeText.lowercase().trim()
-                    if (INCOGNITO_EXACT_LABELS.contains(textLower)) {
-                        isIncognitoActive = true
-                    } else {
-                        for (marker in INCOGNITO_PAGE_MARKERS) {
-                            if (textLower.contains(marker)) {
-                                isIncognitoActive = true
-                                break
-                            }
+                    for (marker in INCOGNITO_PAGE_MARKERS) {
+                        if (textLower.contains(marker)) {
+                            isIncognitoActive = true
+                            break
                         }
                     }
                 }
@@ -1202,43 +1271,25 @@ class FilterAccessibilityService : AccessibilityService() {
         // Word-boundary regexes for short sensitive terms so "סקסופון" or "unisex" are NOT falsely blocked
         private val HEBREW_SEX_WORD_REGEX = Regex("(^|[\\s\\p{Punct}])([הלבמוכש]?סקס)($|[\\s\\p{Punct}])")
         private val ENGLISH_SEX_WORD_REGEX = Regex("\\bsex\\b", RegexOption.IGNORE_CASE)
+        private val DIAGNOSTIC_LOG_SCORE_REGEX = Regex("\\b(porn|sexy|hentai|neutral|skin):\\s*\\d+%?", RegexOption.IGNORE_CASE)
 
         private val INCOGNITO_VIEW_IDS = listOf(
             "com.android.chrome:id/incognito_badge",
-            "com.android.chrome:id/incognito_icon",
             "com.android.chrome:id/incognito_tabs_count",
             "com.android.chrome:id/new_tab_incognito_container",
             "com.android.chrome:id/new_tab_incognito_title",
             "com.android.chrome:id/new_tab_incognito_icon",
-            "com.android.chrome:id/incognito_toggle_tab_layout",
             "com.brave.browser:id/incognito_badge",
             "org.mozilla.firefox:id/private_browsing_indicator",
             "com.sec.android.app.sbrowser:id/secret_mode_icon"
         )
 
-        private val INCOGNITO_EXACT_LABELS = setOf(
-            "גלישה בסתר",
-            "מצב גלישה בסתר",
-            "כרטיסייה פרטית",
-            "גלישה פרטית",
-            "מצב אנונימי",
-            "incognito",
-            "incognito mode",
-            "private browsing"
-        )
-
         private val INCOGNITO_DESC_MARKERS = listOf(
-            "גלישה בסתר",
-            "כרטיסיית גלישה בסתר",
             "כרטיסיות גלישה בסתר",
-            "מצב גלישה בסתר",
-            "כרטיסייה אנונימית",
             "כרטיסיות אנונימיות",
-            "כרטיסייה פרטית",
             "כרטיסיות פרטיות",
-            "incognito",
             "close all incognito tabs",
-            "private browsing"
+            "סגור את כל הכרטיסיות של גלישה בסתר"
         )
 
         private val INCOGNITO_PAGE_MARKERS = listOf(
@@ -1373,9 +1424,35 @@ class FilterAccessibilityService : AccessibilityService() {
             "com.talkie.ai"
         )
 
+        val MONITORED_CONTENT_PACKAGES = setOf(
+            "com.google.android.youtube",
+            "org.telegram.messenger",
+            "org.telegram.messenger.web",
+            "com.twitter.android",
+            "com.instagram.android",
+            "com.facebook.katana",
+            "com.facebook.lite",
+            "com.zhiliaoapp.musically",
+            "com.ss.android.ugc.trill",
+            "com.reddit.frontpage",
+            "com.snapchat.android",
+            "com.pinterest",
+            "com.miui.gallery",
+            "com.mi.android.globalFileexplorer",
+            "com.sec.android.gallery3d",
+            "com.google.android.apps.photos",
+            "com.google.android.apps.nbu.files",
+            "com.android.documentsui",
+            "com.google.android.documentsui",
+            "ai.x.grok"
+        )
+
         val WHITELIST_SAFE_PACKAGES = setOf(
             "com.whatsapp",
             "com.whatsapp.w4b",
+            "com.trello",
+            "com.openai.chatgpt",
+            "com.google.android.googlequicksearchbox",
             "com.waze",
             "com.android.settings",
             "com.android.dialer",

@@ -113,6 +113,10 @@ class LockdownManager(private val context: Context) {
         }
     }
 
+    fun syncChromeIncognitoPolicy(enable: Boolean) {
+        applyChromeManagedRestrictions(enable)
+    }
+
     private fun applyChromeManagedRestrictions(enable: Boolean) {
         if (!isDeviceOwner()) return
         try {

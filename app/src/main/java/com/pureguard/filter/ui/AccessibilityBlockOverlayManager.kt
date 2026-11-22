@@ -152,13 +152,15 @@ class AccessibilityBlockOverlayManager(
                 }
 
                 binding.btnShareBlockReport.setOnClickListener {
-                    dismissOverlayImmediate()
+                    binding.btnShareBlockReport.isEnabled = false
+                    binding.btnShareBlockReport.text = "✅ נשלח אוטומטית לבדיקה!"
                     BlockDiagnosticReporter.shareLastBlockReport(
                         context = service,
                         targetUrlOrApp = targetUrlOrApp,
                         blockReason = blockReason,
                         pageTitle = pageTitle,
-                        textSnippet = textSnippet
+                        textSnippet = textSnippet,
+                        openShareSheetToo = false
                     )
                 }
 
