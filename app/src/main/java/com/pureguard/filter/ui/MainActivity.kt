@@ -472,14 +472,14 @@ class MainActivity : AppCompatActivity() {
         prefs.filterProfileLevel = level
         when (level) {
             PreferencesManager.PROFILE_STRICT -> {
-                prefs.pornThreshold = 0.30f
-                prefs.sexyThreshold = 0.35f
+                prefs.pornThreshold = 0.65f
+                prefs.sexyThreshold = 0.55f
                 if (showToast) {
                     Toast.makeText(this, "הופעל פרופיל: שמירת עיניים מלאה (מחמיר) 🛡️", Toast.LENGTH_SHORT).show()
                 }
             }
             PreferencesManager.PROFILE_MODERATE_SHOPPING -> {
-                prefs.pornThreshold = 0.55f
+                prefs.pornThreshold = 0.72f
                 prefs.sexyThreshold = 0.85f
                 if (showToast) {
                     Toast.makeText(this, "הופעל פרופיל: מותאם לנשים (קניות ואופנה פתוחים) 🛍️", Toast.LENGTH_SHORT).show()

@@ -8,6 +8,19 @@ class PreferencesManager(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    init {
+        // Auto-migrate overly sensitive v4.0-v4.6 strict thresholds (30%/35%) to balanced v4.7 values (65%/55%)
+        val calVer = prefs.getInt(KEY_CALIBRATION_VERSION, 0)
+        if (calVer < 2) {
+            val editor = prefs.edit().putInt(KEY_CALIBRATION_VERSION, 2)
+            if (prefs.getInt(KEY_FILTER_PROFILE_LEVEL, PROFILE_STRICT) == PROFILE_STRICT) {
+                editor.putFloat(KEY_PORN_THRESHOLD, 0.65f)
+                editor.putFloat(KEY_SEXY_THRESHOLD, 0.55f)
+            }
+            editor.apply()
+        }
+    }
+
     /**
      * CRITICAL PHASE 1 REQUIREMENT:
      * Default MUST be false (Testing / Sandbox mode).
@@ -64,15 +77,15 @@ class PreferencesManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_SHOW_DEBUG_TOAST, value).apply()
 
     var pornThreshold: Float
-        get() = prefs.getFloat(KEY_PORN_THRESHOLD, 0.30f)
+        get() = prefs.getFloat(KEY_PORN_THRESHOLD, 0.65f)
         set(value) = prefs.edit().putFloat(KEY_PORN_THRESHOLD, value.coerceIn(0.30f, 0.90f)).apply()
 
     var sexyThreshold: Float
-        get() = prefs.getFloat(KEY_SEXY_THRESHOLD, 0.35f)
+        get() = prefs.getFloat(KEY_SEXY_THRESHOLD, 0.55f)
         set(value) = prefs.edit().putFloat(KEY_SEXY_THRESHOLD, value.coerceIn(0.30f, 0.90f)).apply()
 
     var hentaiThreshold: Float
-        get() = prefs.getFloat(KEY_HENTAI_THRESHOLD, 0.60f)
+        get() = prefs.getFloat(KEY_HENTAI_THRESHOLD, 0.70f)
         set(value) = prefs.edit().putFloat(KEY_HENTAI_THRESHOLD, value.coerceIn(0.30f, 0.90f)).apply()
 
     var geminiApiKey: String
@@ -102,6 +115,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_PORN_THRESHOLD = "porn_threshold"
         private const val KEY_SEXY_THRESHOLD = "sexy_threshold"
         private const val KEY_HENTAI_THRESHOLD = "hentai_threshold"
+        private const val KEY_CALIBRATION_VERSION = "ai_calibration_version"
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
         private const val KEY_UNLOCK_REQUEST_ELAPSED = "unlock_request_elapsed_realtime"
     }

@@ -28,27 +28,19 @@ data class NsfwResult(
     fun isViolation(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): Boolean {
         if (!isModelLoaded) return false
 
-        // Portrait / Modest Clothing Safeguard:
-        // Close-up crops of faces, necks, or hands have high skinRatio (>40%) but high Neutral score (>=55%).
-        // Never allow skin tone on a high-Neutral portrait to artificially boost a low Sexy score into a false block!
-        if (neutral >= 0.55f && porn < 0.22f) {
-            return porn >= pornThresh ||
-                sexy >= (sexyThresh + 0.10f) ||
-                hentai >= hentaiThresh
+        // High-Neutral / Beige-Object Safeguard (prevents false positives on Sefer Torah parchment, portraits, warm cards):
+        // If Neutral >= 30%, require unmistakably high Porn (>=72%) or Sexy (>=68%) to block!
+        if (neutral >= 0.30f) {
+            return porn >= max(pornThresh, 0.72f) ||
+                sexy >= max(sexyThresh, 0.68f) ||
+                hentai >= max(hentaiThresh, 0.78f)
         }
 
         val combinedAdultScore = porn + (sexy * 0.85f)
-        // Only apply skin boost when the model already sees low neutrality (<45% neutral) and real adult/sexy signal
-        val skinBoostedScore = if (skinRatio >= 0.42f && neutral < 0.45f && (porn >= 0.15f || sexy >= 0.25f)) {
-            combinedAdultScore + (skinRatio * 0.15f)
-        } else {
-            combinedAdultScore
-        }
         return porn >= pornThresh ||
             sexy >= sexyThresh ||
             hentai >= hentaiThresh ||
-            combinedAdultScore >= sexyThresh ||
-            skinBoostedScore >= sexyThresh
+            (combinedAdultScore >= 0.74f && neutral < 0.25f)
     }
 
     fun formatReason(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): String {
@@ -148,39 +140,32 @@ class NsfwClassifier(private val context: Context) {
 
             if (height > width * 1.2f) {
                 val fullW = width
-                // Priority 2: Inner Center Portrait Zoom Crop (catches a model in the middle of a white background)
-                val zoomW = (width * 0.58f).toInt().coerceAtLeast(100)
-                val zoomH = (height * 0.52f).toInt().coerceAtLeast(100)
-                val zoomX = ((width - zoomW) / 2).coerceAtLeast(0)
-                val zoomY = ((height - zoomH) / 2).coerceAtLeast(0)
-                candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, zoomX, zoomY, zoomW, zoomH))
+                // Clean 1:1 square crops ONLY (avoids aspect-ratio squashing distortion into 224x224!)
+                // Priority 2: Inner Center Square Zoom Crop (catches a model in the middle of a page)
+                val zoomSize = (width * 0.65f).toInt().coerceAtLeast(100)
+                val zoomX = ((width - zoomSize) / 2).coerceAtLeast(0)
+                val zoomY = ((height - zoomSize) / 2).coerceAtLeast(0)
+                candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, zoomX, zoomY, zoomSize, zoomSize))
 
                 // Priority 3: Center main square (catches fullscreen Shorts/Reels/Photos)
                 val centerY = ((height - fullW) / 2).coerceAtLeast(0)
                 candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, centerY, fullW, fullW))
 
-                // Priority 4: Top video player square (catches top YouTube video player)
+                // Priority 4: Top square (catches top YouTube video player / top banners)
                 val topY = (height * 0.08f).toInt().coerceAtMost(height - fullW)
                 candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, topY, fullW, fullW))
 
-                // Priority 5: Four 2x2 Grid Quadrants (Left-Top, Right-Top, Left-Bottom, Right-Bottom)
+                // Priority 5: Four 2x2 Square Grid Quadrants (Left-Top, Right-Top, Left-Bottom, Right-Bottom)
                 val halfW = (width / 2).coerceAtLeast(1)
-                val gridTopY = (height * 0.10f).toInt().coerceAtLeast(0)
-                val tileH = ((height * 0.38f).toInt()).coerceAtMost(height - gridTopY)
-                val gridBottomY = (gridTopY + tileH).coerceAtMost(height - tileH)
+                val gridTopY = (height * 0.12f).toInt().coerceAtLeast(0)
+                val tileSize = halfW.coerceAtMost(height - gridTopY)
+                val gridBottomY = (gridTopY + tileSize).coerceAtMost(height - tileSize)
 
-                if (tileH > 50 && halfW > 50) {
-                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridTopY, halfW, tileH))
-                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridTopY, halfW, tileH))
-                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridBottomY, halfW, tileH))
-                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridBottomY, halfW, tileH))
-                }
-
-                // Priority 6: Bottom Ad Banner / Lower Page Zone (catches sticky/inline ad banners at bottom of articles)
-                val bottomBannerY = (height * 0.56f).toInt().coerceAtLeast(0)
-                val bottomBannerH = (height * 0.36f).toInt().coerceAtMost(height - bottomBannerY)
-                if (bottomBannerH > 80) {
-                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, bottomBannerY, fullW, bottomBannerH))
+                if (tileSize > 64) {
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridTopY, tileSize, tileSize))
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - tileSize, gridTopY, tileSize, tileSize))
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridBottomY, tileSize, tileSize))
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - tileSize, gridBottomY, tileSize, tileSize))
                 }
             } else {
                 val cropSize = height

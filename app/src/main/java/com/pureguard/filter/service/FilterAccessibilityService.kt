@@ -5,6 +5,7 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
@@ -31,6 +32,7 @@ import com.pureguard.filter.data.TrustedSafeDomains
 import com.pureguard.filter.data.Ut1LingerieDomainFilter
 import com.pureguard.filter.ui.AccessibilityBlockOverlayManager
 import com.pureguard.filter.ui.BlockOverlayActivity
+import com.pureguard.filter.ui.IncognitoButtonShieldManager
 import com.pureguard.filter.util.BlockDiagnosticReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,7 +61,11 @@ class FilterAccessibilityService : AccessibilityService() {
     private var ocrScanner: ScreenOcrScanner? = null
     private var objectAndSkinDetector: ObjectAndSkinDetector? = null
     private var overlayManager: AccessibilityBlockOverlayManager? = null
+    private var incognitoShieldManager: IncognitoButtonShieldManager? = null
     private var ut1LingerieFilter: Ut1LingerieDomainFilter? = null
+
+    @Volatile
+    private var consecutiveBlackBrowserFrames: Int = 0
 
     @Volatile
     private var cachedBlockedApps: Set<String> = emptySet()
@@ -98,6 +104,7 @@ class FilterAccessibilityService : AccessibilityService() {
         powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         overlayManager = AccessibilityBlockOverlayManager(this, serviceScope)
+        incognitoShieldManager = IncognitoButtonShieldManager(this)
 
         // If Device Owner is enabled, natively hide/disable Incognito button inside Chrome
         try {
@@ -182,10 +189,16 @@ class FilterAccessibilityService : AccessibilityService() {
         if (pkg == packageName || isIgnoredSystemOrKeyboardPackage(pkg)) return
 
         // Screen off or Lock Screen check: zero work when screen is off or locked
-        if (!powerManager.isInteractive || keyguardManager.isKeyguardLocked) return
+        if (!powerManager.isInteractive || keyguardManager.isKeyguardLocked) {
+            incognitoShieldManager?.hideShield()
+            return
+        }
 
         // Quick 1-Click Sandbox Testing Pause Toggle (only works when isLockdownEnabled == false)
-        if (prefs.isFilterPausedForTesting) return
+        if (prefs.isFilterPausedForTesting) {
+            incognitoShieldManager?.hideShield()
+            return
+        }
 
         // In Production Lockdown Mode (isLockdownEnabled == true), block opening DNS / VPN settings inside Android Settings
         if (prefs.isLockdownEnabled && pkg == "com.android.settings") {
@@ -221,10 +234,18 @@ class FilterAccessibilityService : AccessibilityService() {
         }
         if (!activeWindowPkg.isNullOrBlank() && !isMonitoredContentPackage(activeWindowPkg)) {
             currentForegroundPackage = activeWindowPkg
+            consecutiveBlackBrowserFrames = 0
+            incognitoShieldManager?.hideShield()
             return
         }
 
         val effectivePkg = if (!activeWindowPkg.isNullOrBlank()) activeWindowPkg else pkg
+        if (effectivePkg != currentForegroundPackage) {
+            consecutiveBlackBrowserFrames = 0
+        }
+        if (!BROWSER_PACKAGES.contains(effectivePkg) || !prefs.blockIncognitoMode) {
+            incognitoShieldManager?.hideShield()
+        }
         currentForegroundPackage = effectivePkg
 
         // Layer 1A: App Blocker check
@@ -298,14 +319,16 @@ class FilterAccessibilityService : AccessibilityService() {
                         evTextLower.contains("you've gone incognito"))
 
                 if (isClickedIncognitoMenu || isActiveIncognitoEvent) {
+                    incognitoShieldManager?.hideShield()
+                    redirectBrowserOutOfIncognito(pkg)
                     triggerBlockOverlay(
                         targetAppOrUrl = pkg,
-                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא מונעת את פעולת סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא מונעת את פעולת סינון התמונות. העברנו אותך חזרה לכרטיסייה רגילה.",
                         pageTitle = "גלישה בסתר",
                         textSnippet = "",
                         isTextBlock = false,
                         inferenceTimeMs = 1L,
-                        navigateBack = true
+                        navigateBack = false
                     )
                     return
                 }
@@ -538,18 +561,28 @@ class FilterAccessibilityService : AccessibilityService() {
                     if (extracted.pageTitle.isNotBlank()) "$targetPkg (${extracted.pageTitle.take(35)})" else targetPkg
                 }
 
+                if (BROWSER_PACKAGES.contains(targetPkg)) {
+                    if (prefs.blockIncognitoMode && extracted.incognitoButtonBounds != null && !extracted.isIncognitoActive) {
+                        incognitoShieldManager?.showOrUpdateShield(extracted.incognitoButtonBounds)
+                    } else {
+                        incognitoShieldManager?.hideShield()
+                    }
+                }
+
                 // CRITICAL SECURITY FIX: Block Incognito / Private Browsing tabs!
                 // Incognito sets Android FLAG_SECURE which blacks out screenshots and blinds Visual AI.
                 if (prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(targetPkg) && extracted.isIncognitoActive) {
                     val elapsedMs = SystemClock.elapsedRealtime() - scanStart
+                    incognitoShieldManager?.hideShield()
+                    redirectBrowserOutOfIncognito(targetPkg)
                     triggerBlockOverlay(
                         targetAppOrUrl = targetPkg,
-                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא מונעת את פעולת סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא מונעת את פעולת סינון התמונות. העברנו אותך חזרה לכרטיסייה רגילה.",
                         pageTitle = "גלישה בסתר",
                         textSnippet = "",
                         isTextBlock = false,
                         inferenceTimeMs = elapsedMs,
-                        navigateBack = true
+                        navigateBack = false
                     )
                     return@launch
                 }
@@ -708,16 +741,19 @@ class FilterAccessibilityService : AccessibilityService() {
 
                         override fun onFailure(errorCode: Int) {
                             Log.d(TAG, "takeScreenshot skipped/failed with errorCode=$errorCode")
-                            // Error code 5 (Android 14+ ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) or 1 (Android 11-13 INTERNAL_ERROR on FLAG_SECURE)
-                            if ((errorCode == 5 || errorCode == 1) && prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
+                            // ONLY Error code 5 (Android 14+ ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) confirms FLAG_SECURE!
+                            // Never block on errorCode == 1 (transient transition error when opening normal links from WhatsApp/Telegram)
+                            if (errorCode == 5 && prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
+                                incognitoShieldManager?.hideShield()
+                                redirectBrowserOutOfIncognito(pkg)
                                 triggerBlockOverlay(
                                     targetAppOrUrl = pkg,
-                                    reason = "נחסם: גלישה בסתר / חלון מאובטח חסום כיוון שהוא מונע את פעולת סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                                    reason = "נחסם: גלישה בסתר / חלון מאובטח חסום כיוון שהוא מונע את פעולת סינון התמונות. העברנו אותך חזרה לכרטיסייה רגילה.",
                                     pageTitle = "גלישה בסתר",
                                     textSnippet = "",
                                     isTextBlock = false,
                                     inferenceTimeMs = 0L,
-                                    navigateBack = true
+                                    navigateBack = false
                                 )
                             }
                         }
@@ -792,17 +828,27 @@ class FilterAccessibilityService : AccessibilityService() {
                 if (screenContext.pageTitle.isNotBlank()) "$pkg (${screenContext.pageTitle.take(30)})" else pkg
             }
 
-            // Block Incognito / FLAG_SECURE blacked-out browser screenshots immediately
+            // Block Incognito / FLAG_SECURE blacked-out browser screenshots
+            // Require 2 consecutive pitch-black frames so a 0.2s loading flash when opening a normal link NEVER falsely triggers Incognito!
             if (prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
-                if (screenContext.isIncognitoActive || isPitchBlackSecureBrowserFrame(softwareBitmap)) {
+                val isBlackFrame = isPitchBlackSecureBrowserFrame(softwareBitmap)
+                if (isBlackFrame) {
+                    consecutiveBlackBrowserFrames++
+                } else {
+                    consecutiveBlackBrowserFrames = 0
+                }
+                if (screenContext.isIncognitoActive || consecutiveBlackBrowserFrames >= 2) {
+                    consecutiveBlackBrowserFrames = 0
+                    incognitoShieldManager?.hideShield()
+                    redirectBrowserOutOfIncognito(pkg)
                     triggerBlockOverlay(
                         targetAppOrUrl = pkg,
-                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא חוסמת צילום מסך ומעוורת את סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא חוסמת צילום מסך ומעוורת את סינון התמונות. העברנו אותך חזרה לכרטיסייה רגילה.",
                         pageTitle = "גלישה בסתר",
                         textSnippet = "",
                         isTextBlock = false,
                         inferenceTimeMs = SystemClock.elapsedRealtime() - totalStart,
-                        navigateBack = true
+                        navigateBack = false
                     )
                     return
                 }
@@ -1078,12 +1124,30 @@ class FilterAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Automatically opens a normal Google tab in the browser so the user exits Incognito cleanly
+     * without having to force-close the browser!
+     */
+    private fun redirectBrowserOutOfIncognito(browserPkg: String) {
+        mainHandler.post {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/?safe=active")).apply {
+                    setPackage(browserPkg)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
     private data class ScreenExtractedContent(
         val url: String,
         val pageTitle: String,
         val visibleText: String,
         val isShortsPlayerActive: Boolean = false,
-        val isIncognitoActive: Boolean = false
+        val isIncognitoActive: Boolean = false,
+        val incognitoButtonBounds: Rect? = null
     )
 
     /**
@@ -1118,6 +1182,7 @@ class FilterAccessibilityService : AccessibilityService() {
         var detectedTitle = ""
         var isShortsActive = false
         var isIncognitoActive = false
+        var incognitoButtonBounds: Rect? = null
         val textBuilder = StringBuilder()
 
         val isBrowser = BROWSER_PACKAGES.contains(pkg)
@@ -1211,6 +1276,34 @@ class FilterAccessibilityService : AccessibilityService() {
             val nodeText = node.text?.toString()?.trim().orEmpty()
             val contentDesc = node.contentDescription?.toString()?.trim().orEmpty()
 
+            // Locate Chrome's "גלישה פרטית" homepage pill button or "כרטיסיית גלישה בסתר חדשה" menu item
+            // so IncognitoButtonShieldManager can cover it with a grayed-out unclickable shield (no USB needed!)
+            if (isBrowser && incognitoButtonBounds == null && node.isVisibleToUser) {
+                val labelCheck = (if (nodeText.isNotEmpty()) nodeText else contentDesc).lowercase().trim()
+                if (labelCheck == "גלישה פרטית" ||
+                    labelCheck == "גלישה בסתר" ||
+                    labelCheck == "כרטיסיית גלישה בסתר חדשה" ||
+                    labelCheck == "כרטיסייה פרטית חדשה" ||
+                    labelCheck == "new incognito tab" ||
+                    labelCheck == "incognito"
+                ) {
+                    val rect = Rect()
+                    val parent = node.parent
+                    if (parent != null && parent.isClickable) {
+                        parent.getBoundsInScreen(rect)
+                        try { parent.recycle() } catch (_: Exception) {}
+                    } else {
+                        node.getBoundsInScreen(rect)
+                        if (parent != null) {
+                            try { parent.recycle() } catch (_: Exception) {}
+                        }
+                    }
+                    if (rect.width() in 80..950 && rect.height() in 45..260 && rect.top > 40) {
+                        incognitoButtonBounds = rect
+                    }
+                }
+            }
+
             if (nodeText.isNotEmpty()) {
                 if (isBrowser && !isIncognitoActive) {
                     val textLower = nodeText.lowercase().trim()
@@ -1258,12 +1351,13 @@ class FilterAccessibilityService : AccessibilityService() {
             pageTitle = detectedTitle,
             visibleText = textBuilder.toString().trim(),
             isShortsPlayerActive = isShortsActive,
-            isIncognitoActive = isIncognitoActive
+            isIncognitoActive = isIncognitoActive,
+            incognitoButtonBounds = incognitoButtonBounds
         )
     }
 
     private fun looksLikeUrl(text: String): Boolean {
-        if (text.contains(" ")) return false
+        if (text.contains(" ") || text.contains("@")) return false
         return text.startsWith("http://") ||
             text.startsWith("https://") ||
             text.contains(".com") ||
@@ -1279,6 +1373,7 @@ class FilterAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         overlayManager?.dismissOverlayImmediate()
+        incognitoShieldManager?.hideShield()
         serviceScope.cancel()
         screenshotExecutor.shutdownNow()
         nsfwClassifier?.close()
