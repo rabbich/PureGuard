@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -34,6 +35,7 @@ import com.pureguard.filter.data.BlockedKeywordEntity
 import com.pureguard.filter.data.PreferencesManager
 import com.pureguard.filter.data.PureGuardDatabase
 import com.pureguard.filter.databinding.ActivityMainBinding
+import com.pureguard.filter.service.AdGuardDnsVpnService
 import com.pureguard.filter.service.Android10ScreenCapturer
 import com.pureguard.filter.service.FilterAccessibilityService
 import com.pureguard.filter.service.ScreenCaptureKeepAliveService
@@ -61,6 +63,22 @@ class MainActivity : AppCompatActivity() {
     private var isLogsExpanded = false
     private var isApiKeyExpanded = false
     private var isUpdatingProfileUi = false
+
+    private val dnsVpnLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            startService(Intent(this, AdGuardDnsVpnService::class.java))
+            Toast.makeText(this, "סינון פרסומות ופורנו (AdGuard Family DNS) הופעל אוטומטית! 🛡️", Toast.LENGTH_LONG).show()
+            if (isWizardActive && currentWizardStep == 3) {
+                currentWizardStep = 4
+                renderWizardVisibilityAndStep()
+            }
+            refreshServiceAndLockdownStatus()
+        } else {
+            Toast.makeText(this, "יש לאשר חיבור DNS כדי להפעיל סינון פרסומות אוטומטי", Toast.LENGTH_LONG).show()
+        }
+    }
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -92,7 +110,8 @@ class MainActivity : AppCompatActivity() {
         wasServiceEnabledLastCheck = serviceOn
         if (!prefs.isSetupWizardCompleted || !serviceOn) {
             isWizardActive = true
-            currentWizardStep = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
+            // If user already completed initial setup before (e.g. after an app update), jump straight to Step 2!
+            currentWizardStep = if (prefs.isSetupWizardCompleted || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
         }
 
         setupWizard()
@@ -114,7 +133,7 @@ class MainActivity : AppCompatActivity() {
                 "במכשיר זה (מתחת לאנדרואיד 13) אין חסימת 'הגדרות מוגבלות' – ניתן לעבור ישירות לשלב הבא."
         }
 
-        binding.btnWizardOpenAppInfo.setOnClickListener {
+        val openAppInfoClickListener = View.OnClickListener {
             try {
                 startActivity(
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -130,6 +149,8 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             }
         }
+        binding.btnWizardOpenAppInfo.setOnClickListener(openAppInfoClickListener)
+        binding.btnWizardStep2OpenAppInfo.setOnClickListener(openAppInfoClickListener)
 
         binding.btnWizardOpenAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -140,6 +161,10 @@ class MainActivity : AppCompatActivity() {
             binding.btnWizardAndroid10Vision.setOnClickListener {
                 launchAndroid10ScreenCapture()
             }
+        }
+
+        binding.btnWizardAutoDns.setOnClickListener {
+            activateOneClickAutoDns()
         }
 
         binding.btnWizardPrivateDns.setOnClickListener {
@@ -297,7 +322,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        binding.btnAutoDnsToggle.setOnClickListener {
+            if (AdGuardDnsVpnService.isRunning) {
+                AdGuardDnsVpnService.stop(this)
+                Toast.makeText(this, "סינון ה-DNS האוטומטי כובה", Toast.LENGTH_SHORT).show()
+                refreshServiceAndLockdownStatus()
+            } else {
+                activateOneClickAutoDns()
+            }
+        }
+
         binding.btnPrivateDnsGuide.setOnClickListener {
+            openPrivateDnsDialog()
+        }
+    }
+
+    private fun activateOneClickAutoDns() {
+        try {
+            val prepIntent = VpnService.prepare(this)
+            if (prepIntent != null) {
+                dnsVpnLauncher.launch(prepIntent)
+            } else {
+                startService(Intent(this, AdGuardDnsVpnService::class.java))
+                Toast.makeText(this, "סינון פרסומות ופורנו (AdGuard Family DNS) הופעל אוטומטית! 🛡️", Toast.LENGTH_LONG).show()
+                if (isWizardActive && currentWizardStep == 3) {
+                    currentWizardStep = 4
+                    renderWizardVisibilityAndStep()
+                }
+                refreshServiceAndLockdownStatus()
+            }
+        } catch (e: Exception) {
             openPrivateDnsDialog()
         }
     }
@@ -719,7 +773,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val dnsHost = getConfiguredPrivateDnsHost()
-        if (dnsHost != null) {
+        val isAutoDnsVpnActive = AdGuardDnsVpnService.isRunning
+        if (isAutoDnsVpnActive) {
+            binding.tvPrivateDnsStatus.text = "סינון פרסומות ופורנו (AdGuard Family DNS): פעיל אוטומטית ✅"
+            binding.tvPrivateDnsStatus.setTextColor(0xFF2E7D32.toInt())
+            binding.btnAutoDnsToggle.text = "🛡️ חסימת פרסומות ו-DNS אוטומטית פעילה ✅ (לחץ לכיבוי)"
+            binding.tvWizardStep3Status.text = "סטטוס DNS: חסימת פרסומות ופורנו פעילה אוטומטית ✅"
+            binding.tvWizardStep3Status.setTextColor(0xFF2E7D32.toInt())
+        } else if (dnsHost != null) {
             val isAdGuard = dnsHost.equals(ADGUARD_FAMILY_DNS, ignoreCase = true)
             val dnsMsg = if (isAdGuard) {
                 "DNS פרטי: מוגדר ($dnsHost) ✅"
@@ -728,12 +789,14 @@ class MainActivity : AppCompatActivity() {
             }
             binding.tvPrivateDnsStatus.text = dnsMsg
             binding.tvPrivateDnsStatus.setTextColor(0xFF2E7D32.toInt())
+            binding.btnAutoDnsToggle.text = "🛡️ הפעל חסימת פרסומות ו-DNS אוטומטית (לחיצה אחת)"
             binding.tvWizardStep3Status.text = "סטטוס DNS פרטי: מוגדר ($dnsHost) ✅"
             binding.tvWizardStep3Status.setTextColor(0xFF2E7D32.toInt())
         } else {
-            binding.tvPrivateDnsStatus.text = "DNS פרטי (חוסם פרסומות): לא מוגדר ⚠️"
+            binding.tvPrivateDnsStatus.text = "DNS (חוסם פרסומות ופורנו): לא פעיל ⚠️ (לחץ להפעלה בלחיצה אחת)"
             binding.tvPrivateDnsStatus.setTextColor(0xFF546E7A.toInt())
-            binding.tvWizardStep3Status.text = "סטטוס DNS פרטי: לא מוגדר עדיין ⚠️"
+            binding.btnAutoDnsToggle.text = "🛡️ הפעל חסימת פרסומות ו-DNS אוטומטית (לחיצה אחת)"
+            binding.tvWizardStep3Status.text = "סטטוס DNS: לחץ על הכפתור למטה להפעלה אוטומטית בלחיצה אחת ⏳"
             binding.tvWizardStep3Status.setTextColor(0xFF546E7A.toInt())
         }
 

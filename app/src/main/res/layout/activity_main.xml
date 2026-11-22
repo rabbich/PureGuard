@@ -200,6 +200,15 @@
                             android:textColor="#FFFFFF" />
 
                         <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnWizardStep2OpenAppInfo"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="מופיע 'הגדרה מוגבלת'? לחץ כאן לפתיחת פרטי האפליקציה"
+                            android:textSize="12sp" />
+
+                        <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnWizardAndroid10Vision"
                             style="@style/Widget.Material3.Button.TonalButton"
                             android:layout_width="match_parent"
@@ -247,13 +256,22 @@
                             android:textSize="14sp" />
 
                         <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnWizardPrivateDns"
+                            android:id="@+id/btnWizardAutoDns"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="14dp"
                             android:backgroundTint="#042B59"
-                            android:text="3️⃣ העתק family.adguard-dns.com ופתח הגדרות DNS"
+                            android:text="3️⃣ הפעל חסימת פרסומות ופורנו אוטומטית (לחיצה אחת!)"
                             android:textColor="#FFFFFF" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnWizardPrivateDns"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="או הגדר DNS ידנית בהגדרות המכשיר (family.adguard-dns.com)"
+                            android:textSize="12sp" />
                     </LinearLayout>
 
                     <!-- Wizard Step 4: Protection Profile -->
@@ -512,12 +530,21 @@
                         android:textSize="13sp" />
 
                     <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAutoDnsToggle"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="🛡️ הפעל חסימת פרסומות ו-DNS אוטומטית (לחיצה אחת)" />
+
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPrivateDnsGuide"
                         style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:text="חסימת פרסומות ופורנו ב-DNS (family.adguard-dns.com)" />
+                        android:layout_marginTop="4dp"
+                        android:text="או הגדרת DNS ידנית בהגדרות (family.adguard-dns.com)"
+                        android:textSize="12sp" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchPauseFilterTesting"

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -98,6 +99,16 @@ class FilterAccessibilityService : AccessibilityService() {
             ocrScanner = ScreenOcrScanner()
             objectAndSkinDetector = ObjectAndSkinDetector()
             ut1LingerieFilter = Ut1LingerieDomainFilter(applicationContext)
+        }
+
+        // Auto-resume Split-Tunnel AdGuard Family DNS VPN if user already authorized it
+        if (prefs.isAutoDnsVpnEnabled && !AdGuardDnsVpnService.isRunning) {
+            try {
+                if (VpnService.prepare(applicationContext) == null) {
+                    startService(Intent(applicationContext, AdGuardDnsVpnService::class.java))
+                }
+            } catch (_: Throwable) {
+            }
         }
 
         // Observe Room DB changes into in-memory caches for <0.5% battery zero-lag checks
@@ -204,6 +215,51 @@ class FilterAccessibilityService : AccessibilityService() {
         }
 
         lastContentEventElapsed = SystemClock.elapsedRealtime()
+
+        // Immediate Incognito / Private Tab click & event interception inside browsers
+        if (prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
+            val evTextLower = buildString {
+                event.text?.forEach { append(it).append(' ') }
+                event.contentDescription?.let { append(it) }
+            }.lowercase().trim()
+
+            if (evTextLower.isNotEmpty()) {
+                val isClickedIncognitoMenu = (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_SELECTED) &&
+                    (evTextLower.contains("גלישה בסתר") ||
+                        evTextLower.contains("כרטיסייה פרטית") ||
+                        evTextLower.contains("גלישה פרטית") ||
+                        evTextLower.contains("מצב אנונימי") ||
+                        evTextLower.contains("כרטיסייה אנונימית") ||
+                        evTextLower.contains("incognito") ||
+                        evTextLower.contains("private tab") ||
+                        evTextLower.contains("secret mode"))
+
+                val isActiveIncognitoEvent = !evTextLower.contains("חדשה") &&
+                    !evTextLower.contains("new ") &&
+                    (evTextLower.contains("עברת לגלישה בסתר") ||
+                        evTextLower.contains("כעת באפשרותך לגלוש באופן פרטי") ||
+                        evTextLower.contains("כרטיסיות גלישה בסתר") ||
+                        evTextLower.contains("כרטיסיית גלישה בסתר") ||
+                        evTextLower.contains("כרטיסייה אנונימית") ||
+                        evTextLower.contains("כרטיסיות אנונימיות") ||
+                        evTextLower.contains("you've gone incognito") ||
+                        evTextLower.contains("incognito tab"))
+
+                if (isClickedIncognitoMenu || isActiveIncognitoEvent) {
+                    triggerBlockOverlay(
+                        targetAppOrUrl = pkg,
+                        reason = "נחסם: גלישה בסתר (Incognito) חסומה כיוון שהיא מונעת את פעולת סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
+                        pageTitle = "גלישה בסתר",
+                        textSnippet = "",
+                        isTextBlock = false,
+                        inferenceTimeMs = 1L,
+                        navigateBack = true
+                    )
+                    return
+                }
+            }
+        }
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
@@ -504,8 +560,8 @@ class FilterAccessibilityService : AccessibilityService() {
 
                         override fun onFailure(errorCode: Int) {
                             Log.d(TAG, "takeScreenshot skipped/failed with errorCode=$errorCode")
-                            // Error code 5 (ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) on a browser means FLAG_SECURE (Incognito)
-                            if (errorCode == 5 && prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
+                            // Error code 5 (Android 14+ ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) or 1 (Android 11-13 INTERNAL_ERROR on FLAG_SECURE)
+                            if ((errorCode == 5 || errorCode == 1) && prefs.blockIncognitoMode && BROWSER_PACKAGES.contains(pkg)) {
                                 triggerBlockOverlay(
                                     targetAppOrUrl = pkg,
                                     reason = "נחסם: גלישה בסתר / חלון מאובטח חסום כיוון שהוא מונע את פעולת סינון התמונות. אנא גלוש בכרטיסייה רגילה.",
@@ -874,10 +930,11 @@ class FilterAccessibilityService : AccessibilityService() {
         if (w < 40 || h < 80) return false
         var pureZeroCount = 0
         var total = 0
-        for (gy in 2..11) {
-            val y = (h * gy) / 14
-            for (gx in 1..10) {
-                val x = (w * gx) / 11
+        // Sample the middle 50% web content zone (y: 25%..75%, x: 15%..85%), avoiding status/nav/toolbar edges
+        for (gy in 0..8) {
+            val y = ((h * 0.25f) + (h * 0.50f * gy / 8f)).toInt().coerceIn(0, h - 1)
+            for (gx in 0..8) {
+                val x = ((w * 0.15f) + (w * 0.70f * gx / 8f)).toInt().coerceIn(0, w - 1)
                 val p = bitmap.getPixel(x, y)
                 val rgb = p and 0x00FFFFFF
                 if (rgb == 0) {
@@ -886,7 +943,7 @@ class FilterAccessibilityService : AccessibilityService() {
                 total++
             }
         }
-        return total > 0 && (pureZeroCount.toFloat() / total.toFloat()) >= 0.99f
+        return total > 0 && (pureZeroCount.toFloat() / total.toFloat()) >= 0.85f
     }
 
     private fun extractScreenContent(root: AccessibilityNodeInfo, pkg: String): ScreenExtractedContent {
@@ -960,18 +1017,16 @@ class FilterAccessibilityService : AccessibilityService() {
             }
             if (isBrowser &&
                 !viewIdRes.contains("menu", ignoreCase = true) &&
-                (viewIdRes.contains("incognito_badge", ignoreCase = true) ||
-                    viewIdRes.contains("incognito_ntp", ignoreCase = true) ||
-                    viewIdRes.contains("incognito_tabs", ignoreCase = true) ||
-                    viewIdRes.contains("private_browsing_indicator", ignoreCase = true) ||
-                    viewIdRes.contains("secret_mode_icon", ignoreCase = true))
+                (viewIdRes.contains("incognito", ignoreCase = true) ||
+                    viewIdRes.contains("private_browsing", ignoreCase = true) ||
+                    viewIdRes.contains("secret_mode", ignoreCase = true))
             ) {
                 isIncognitoActive = true
             }
 
             // Auto-close intrusive popup ad banners (e.g. Google Ads / Taboola close buttons)
             val descLower = node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
-            if (isBrowser && !isIncognitoActive && descLower.isNotEmpty() && !descLower.contains("חדשה") && !descLower.contains("new incognito")) {
+            if (isBrowser && !isIncognitoActive && descLower.isNotEmpty() && !descLower.contains("חדשה") && !descLower.contains("new ")) {
                 for (marker in INCOGNITO_DESC_MARKERS) {
                     if (descLower.contains(marker)) {
                         isIncognitoActive = true
@@ -999,11 +1054,15 @@ class FilterAccessibilityService : AccessibilityService() {
 
             if (nodeText.isNotEmpty()) {
                 if (isBrowser && !isIncognitoActive) {
-                    val textLower = nodeText.lowercase()
-                    for (marker in INCOGNITO_PAGE_MARKERS) {
-                        if (textLower.contains(marker)) {
-                            isIncognitoActive = true
-                            break
+                    val textLower = nodeText.lowercase().trim()
+                    if (INCOGNITO_EXACT_LABELS.contains(textLower)) {
+                        isIncognitoActive = true
+                    } else {
+                        for (marker in INCOGNITO_PAGE_MARKERS) {
+                            if (textLower.contains(marker)) {
+                                isIncognitoActive = true
+                                break
+                            }
                         }
                     }
                 }
@@ -1085,28 +1144,53 @@ class FilterAccessibilityService : AccessibilityService() {
 
         private val INCOGNITO_VIEW_IDS = listOf(
             "com.android.chrome:id/incognito_badge",
+            "com.android.chrome:id/incognito_icon",
             "com.android.chrome:id/incognito_tabs_count",
             "com.android.chrome:id/new_tab_incognito_container",
+            "com.android.chrome:id/new_tab_incognito_title",
+            "com.android.chrome:id/new_tab_incognito_icon",
+            "com.android.chrome:id/incognito_toggle_tab_layout",
             "com.brave.browser:id/incognito_badge",
             "org.mozilla.firefox:id/private_browsing_indicator",
             "com.sec.android.app.sbrowser:id/secret_mode_icon"
         )
 
-        private val INCOGNITO_DESC_MARKERS = listOf(
-            "כרטיסיית גלישה בסתר",
+        private val INCOGNITO_EXACT_LABELS = setOf(
+            "גלישה בסתר",
             "מצב גלישה בסתר",
-            "סגור את כל הכרטיסיות של גלישה בסתר",
-            "incognito tab",
+            "כרטיסייה פרטית",
+            "גלישה פרטית",
+            "מצב אנונימי",
+            "incognito",
+            "incognito mode",
+            "private browsing"
+        )
+
+        private val INCOGNITO_DESC_MARKERS = listOf(
+            "גלישה בסתר",
+            "כרטיסיית גלישה בסתר",
+            "כרטיסיות גלישה בסתר",
+            "מצב גלישה בסתר",
+            "כרטיסייה אנונימית",
+            "כרטיסיות אנונימיות",
+            "כרטיסייה פרטית",
+            "כרטיסיות פרטיות",
+            "incognito",
             "close all incognito tabs",
-            "private browsing mode"
+            "private browsing"
         )
 
         private val INCOGNITO_PAGE_MARKERS = listOf(
+            "עברת לגלישה בסתר",
             "עברת למצב גלישה בסתר",
+            "עברת למצב אנונימי",
+            "כעת באפשרותך לגלוש באופן פרטי",
+            "לא יישמרו ב-chrome",
             "הפעלת גלישה בסתר",
             "אתה גולש בסתר",
             "you've gone incognito",
             "you’ve gone incognito",
+            "now you can browse privately",
             "close all incognito tabs",
             "סגור את כל הכרטיסיות של גלישה בסתר"
         )
