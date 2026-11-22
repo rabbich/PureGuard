@@ -111,8 +111,7 @@ class MainActivity : AppCompatActivity() {
         wasServiceEnabledLastCheck = serviceOn
         if (!prefs.isSetupWizardCompleted || !serviceOn) {
             isWizardActive = true
-            // If user already completed initial setup before (e.g. after an app update), jump straight to Step 2!
-            currentWizardStep = if (prefs.isSetupWizardCompleted || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
+            currentWizardStep = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
         }
 
         setupWizard()
@@ -146,6 +145,10 @@ class MainActivity : AppCompatActivity() {
                     "גלול למטה (או תפריט 3 נקודות) ולחץ 'אפשר הגדרות מוגבלות'",
                     Toast.LENGTH_LONG
                 ).show()
+                if (isWizardActive && currentWizardStep == 1) {
+                    currentWizardStep = 2
+                    renderWizardVisibilityAndStep()
+                }
             } catch (_: Exception) {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             }
@@ -760,9 +763,14 @@ class MainActivity : AppCompatActivity() {
     private fun refreshServiceAndLockdownStatus() {
         val isServiceEnabled = isAccessibilityServiceEnabled()
 
-        if (isWizardActive && currentWizardStep == 2 && isServiceEnabled && !wasServiceEnabledLastCheck) {
-            currentWizardStep = 3
-            Toast.makeText(this, "מעולה! שירות הנגישות של מגן הקודש הופעל ✅", Toast.LENGTH_LONG).show()
+        if (isWizardActive && (currentWizardStep == 1 || currentWizardStep == 2) && isServiceEnabled && !wasServiceEnabledLastCheck) {
+            if (prefs.isSetupWizardCompleted) {
+                isWizardActive = false
+                Toast.makeText(this, "שירות הנגישות הופעל מחדש! ההגדרות הקודמות שלך נשמרו ✅", Toast.LENGTH_LONG).show()
+            } else {
+                currentWizardStep = 3
+                Toast.makeText(this, "מעולה! שירות הנגישות של מגן הקודש הופעל ✅", Toast.LENGTH_LONG).show()
+            }
             renderWizardVisibilityAndStep()
         }
         wasServiceEnabledLastCheck = isServiceEnabled

@@ -187,6 +187,31 @@ class FilterAccessibilityService : AccessibilityService() {
         // Quick 1-Click Sandbox Testing Pause Toggle (only works when isLockdownEnabled == false)
         if (prefs.isFilterPausedForTesting) return
 
+        // In Production Lockdown Mode (isLockdownEnabled == true), block opening DNS / VPN settings inside Android Settings
+        if (prefs.isLockdownEnabled && pkg == "com.android.settings") {
+            val settingsTextLower = buildString {
+                event.text?.forEach { append(it).append(' ') }
+                event.contentDescription?.let { append(it) }
+            }.lowercase()
+            if (settingsTextLower.contains("dns פרטי") ||
+                settingsTextLower.contains("private dns") ||
+                settingsTextLower.contains("family.adguard-dns.com") ||
+                settingsTextLower.contains("הגדרות vpn") ||
+                settingsTextLower.contains("vpn settings")
+            ) {
+                triggerBlockOverlay(
+                    targetAppOrUrl = "הגדרות DNS / סינון רשת",
+                    reason = "נחסם: במצב נעילה מלא הגדרות ה-DNS המשפחתי נעולות לשינוי.",
+                    pageTitle = "נעילת DNS",
+                    textSnippet = "",
+                    isTextBlock = false,
+                    inferenceTimeMs = 0L,
+                    navigateBack = true
+                )
+                return
+            }
+        }
+
         // Verify actual visible foreground window package so background Xiaomi events never scan WhatsApp!
         val activeRootNode = try { rootInActiveWindow } catch (_: Throwable) { null }
         val activeWindowPkg = try {

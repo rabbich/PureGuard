@@ -48,6 +48,7 @@ class LockdownManager(private val context: Context) {
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
                 dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
+                dpm.addUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_VPN)
                 applyPrivateDnsLock("family.adguard-dns.com")
                 applyChromeManagedRestrictions(enable = true)
             }
@@ -104,6 +105,8 @@ class LockdownManager(private val context: Context) {
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
+                dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_VPN)
+                dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_PRIVATE_DNS)
                 applyChromeManagedRestrictions(enable = false)
             }
             Result.success(Unit)
