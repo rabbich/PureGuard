@@ -29,6 +29,7 @@ import com.pureguard.filter.data.TrustedSafeDomains
 import com.pureguard.filter.data.Ut1LingerieDomainFilter
 import com.pureguard.filter.ui.AccessibilityBlockOverlayManager
 import com.pureguard.filter.ui.BlockOverlayActivity
+import com.pureguard.filter.util.BlockDiagnosticReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -124,25 +125,31 @@ class FilterAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Layer 2: Event-driven debounced visual AI + OCR check (650ms debounce)
+        // Layer 2: Immediate + Trailing Throttled visual AI + OCR check
+        // (Unlike debounce, this NEVER gets postponed for 20s by continuous ad animations or scrolling!)
         serviceScope.launch(Dispatchers.Default) {
             visualScanTrigger
-                .debounce(DEBOUNCE_VISUAL_SCAN_MS)
-                .collect { pkg ->
+                .collectLatest { pkg ->
+                    val elapsed = SystemClock.elapsedRealtime() - lastScreenshotElapsed
+                    val waitMs = (HARD_SCREENSHOT_COOLDOWN_MS - elapsed).coerceAtLeast(180L)
+                    if (elapsed < HARD_SCREENSHOT_COOLDOWN_MS) {
+                        kotlinx.coroutines.delay(waitMs)
+                    } else {
+                        kotlinx.coroutines.delay(180L)
+                    }
                     performVisualAiScanIfEligible(pkg)
                 }
         }
 
-        // Battery-Safe Video Watchdog:
-        // Only samples when the user is inside a video app (YouTube/TikTok) OR when content changed recently (<12s ago),
-        // preventing infinite scanning on static web pages.
+        // Battery-Safe Video & Dynamic Ad Watchdog:
+        // Samples when the user is inside a video app (YouTube/TikTok) OR when content changed recently (<15s ago)
         serviceScope.launch(Dispatchers.Default) {
             while (true) {
-                kotlinx.coroutines.delay(3500L)
+                kotlinx.coroutines.delay(2200L)
                 val pkg = currentForegroundPackage
                 val now = SystemClock.elapsedRealtime()
                 val isVideoApp = pkg.contains("youtube") || pkg.contains("musically") || pkg.contains("trill")
-                val hadRecentActivity = (now - lastContentEventElapsed) < 12000L
+                val hadRecentActivity = (now - lastContentEventElapsed) < 15000L
                 if (powerManager.isInteractive &&
                     !prefs.isFilterPausedForTesting &&
                     pkg.isNotEmpty() &&
@@ -335,16 +342,57 @@ class FilterAccessibilityService : AccessibilityService() {
 
             val compactKw = kw.replace(" ", "").replace("_", "").replace("-", "")
             if (item.isDomain) {
-                if (urlLower.contains(kw) || fullTextLower.contains(kw)) {
+                if (urlLower.contains(kw) || isStandaloneKeywordMatch(fullTextLower, kw)) {
                     return item
                 }
             } else {
-                if (fullTextLower.contains(kw) || (compactKw.length >= 6 && gluedTokensLower.contains(compactKw))) {
+                if (isStandaloneKeywordMatch(fullTextLower, kw) ||
+                    (compactKw.length >= 8 && gluedTokensLower.contains(compactKw))
+                ) {
                     return item
                 }
             }
         }
         return null
+    }
+
+    /**
+     * Strict Word-Boundary matcher for Hebrew & English keywords:
+     * Prevents false positives where a short forbidden word appears inside an innocent longer word
+     * (e.g. inside news articles or Telegram channels like Abu Ali Express).
+     * Allows standard single-letter Hebrew prefixes (ה, ל, ב, מ, ו, כ, ש) before Hebrew words.
+     */
+    private fun isStandaloneKeywordMatch(textLower: String, kwLower: String): Boolean {
+        var idx = textLower.indexOf(kwLower)
+        if (idx == -1) return false
+
+        val isHebrewKw = kwLower.any { it in '\u0590'..'\u05FF' }
+        val hebrewPrefixes = "הלבמוכש"
+
+        while (idx != -1) {
+            val endIdx = idx + kwLower.length
+            val afterOk = (endIdx >= textLower.length) || !Character.isLetterOrDigit(textLower[endIdx])
+
+            val beforeOk = if (idx == 0) {
+                true
+            } else {
+                val prevChar = textLower[idx - 1]
+                if (!Character.isLetterOrDigit(prevChar)) {
+                    true
+                } else if (isHebrewKw && hebrewPrefixes.contains(prevChar)) {
+                    // Valid only if the prefix itself is at the start of the word!
+                    idx - 1 == 0 || !Character.isLetterOrDigit(textLower[idx - 2])
+                } else {
+                    false
+                }
+            }
+
+            if (beforeOk && afterOk) {
+                return true
+            }
+            idx = textLower.indexOf(kwLower, idx + 1)
+        }
+        return false
     }
 
     private fun scheduleTextAndUrlScan(pkg: String, forceImmediate: Boolean) {
@@ -698,7 +746,8 @@ class FilterAccessibilityService : AccessibilityService() {
                         textSnippet = fullContextSnippet,
                         isTextBlock = true,
                         inferenceTimeMs = ocrElapsed,
-                        navigateBack = true
+                        navigateBack = true,
+                        capturedBitmap = softwareBitmap
                     )
                     return
                 }
@@ -768,7 +817,8 @@ class FilterAccessibilityService : AccessibilityService() {
                     textSnippet = ocrText.ifBlank { "זיהוי תמונה/וידאו ויזואלי באמצעות מודל AI מקומי" },
                     isTextBlock = false,
                     inferenceTimeMs = totalElapsed,
-                    navigateBack = true
+                    navigateBack = true,
+                    capturedBitmap = softwareBitmap
                 )
             }
         } catch (e: Throwable) {
@@ -790,13 +840,24 @@ class FilterAccessibilityService : AccessibilityService() {
         textSnippet: String,
         isTextBlock: Boolean,
         inferenceTimeMs: Long,
-        navigateBack: Boolean
+        navigateBack: Boolean,
+        capturedBitmap: Bitmap? = null
     ) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastBlockOverlayElapsed < 1200L) {
             return
         }
         lastBlockOverlayElapsed = now
+
+        // Save snapshot & full technical diagnostic report before navigating back or recycling the bitmap
+        BlockDiagnosticReporter.saveBlockSnapshot(
+            context = applicationContext,
+            bitmap = capturedBitmap,
+            targetUrlOrApp = targetAppOrUrl,
+            blockReason = reason,
+            pageTitle = pageTitle,
+            textSnippet = textSnippet
+        )
 
         if (navigateBack) {
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -1134,9 +1195,9 @@ class FilterAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "FilterAccessService"
 
-        private const val TEXT_SCAN_THROTTLE_MS = 550L
-        private const val DEBOUNCE_VISUAL_SCAN_MS = 950L
-        private const val HARD_SCREENSHOT_COOLDOWN_MS = 2500L
+        private const val TEXT_SCAN_THROTTLE_MS = 450L
+        private const val DEBOUNCE_VISUAL_SCAN_MS = 500L
+        private const val HARD_SCREENSHOT_COOLDOWN_MS = 1300L
 
         // Word-boundary regexes for short sensitive terms so "סקסופון" or "unisex" are NOT falsely blocked
         private val HEBREW_SEX_WORD_REGEX = Regex("(^|[\\s\\p{Punct}])([הלבמוכש]?סקס)($|[\\s\\p{Punct}])")

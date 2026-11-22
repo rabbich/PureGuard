@@ -12,6 +12,7 @@ import com.pureguard.filter.data.PreferencesManager
 import com.pureguard.filter.data.PureGuardDatabase
 import com.pureguard.filter.data.TemporaryWhitelistEntity
 import com.pureguard.filter.databinding.ActivityBlockOverlayBinding
+import com.pureguard.filter.util.BlockDiagnosticReporter
 import kotlinx.coroutines.launch
 
 class BlockOverlayActivity : AppCompatActivity() {
@@ -105,6 +106,17 @@ class BlockOverlayActivity : AppCompatActivity() {
 
         binding.btnGoHome.setOnClickListener {
             navigateToHomeScreen()
+        }
+
+        binding.btnShareBlockReport.setOnClickListener {
+            BlockDiagnosticReporter.shareLastBlockReport(
+                context = this,
+                targetUrlOrApp = targetUrlOrApp,
+                blockReason = blockReason,
+                pageTitle = pageTitle,
+                textSnippet = textSnippet
+            )
+            finish()
         }
     }
 

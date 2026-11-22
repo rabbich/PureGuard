@@ -43,6 +43,9 @@ interface BlockedKeywordsDao {
 
     @Query("DELETE FROM blocked_keywords WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM blocked_keywords WHERE keyword = :keyword")
+    suspend fun deleteByKeyword(keyword: String)
 }
 
 @Dao

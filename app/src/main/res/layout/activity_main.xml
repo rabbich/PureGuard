@@ -860,6 +860,15 @@
                         android:text="📋 הצג יומן חסימות אחרונות (0 אירועים)"
                         android:textSize="13sp" />
 
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnShareLastBlockFromDashboard"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="📤 שלח צילום ודו&quot;ח חסימה אחרון לבדיקה"
+                        android:textSize="13sp" />
+
                     <LinearLayout
                         android:id="@+id/containerBlockLogs"
                         android:layout_width="match_parent"

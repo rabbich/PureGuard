@@ -18,6 +18,7 @@ import com.pureguard.filter.data.PreferencesManager
 import com.pureguard.filter.data.PureGuardDatabase
 import com.pureguard.filter.data.TemporaryWhitelistEntity
 import com.pureguard.filter.databinding.ActivityBlockOverlayBinding
+import com.pureguard.filter.util.BlockDiagnosticReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -148,6 +149,17 @@ class AccessibilityBlockOverlayManager(
                 binding.btnGoHome.setOnClickListener {
                     dismissOverlayImmediate()
                     service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+                }
+
+                binding.btnShareBlockReport.setOnClickListener {
+                    dismissOverlayImmediate()
+                    BlockDiagnosticReporter.shareLastBlockReport(
+                        context = service,
+                        targetUrlOrApp = targetUrlOrApp,
+                        blockReason = blockReason,
+                        pageTitle = pageTitle,
+                        textSnippet = textSnippet
+                    )
                 }
 
                 val params = WindowManager.LayoutParams(

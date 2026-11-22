@@ -27,11 +27,20 @@ data class NsfwResult(
 ) {
     fun isViolation(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): Boolean {
         if (!isModelLoaded) return false
-        val combinedAdultScore = porn + (sexy * 0.90f)
-        // NetSpark-style fusion: if skinRatio is very high (>42% of frame is exposed skin/close-up)
-        // and the AI sees even moderate Sexy/Porn signal, trigger block!
-        val skinBoostedScore = if (skinRatio >= 0.42f) {
-            porn + sexy + (skinRatio * 0.35f)
+
+        // Portrait / Modest Clothing Safeguard:
+        // Close-up crops of faces, necks, or hands have high skinRatio (>40%) but high Neutral score (>=55%).
+        // Never allow skin tone on a high-Neutral portrait to artificially boost a low Sexy score into a false block!
+        if (neutral >= 0.55f && porn < 0.22f) {
+            return porn >= pornThresh ||
+                sexy >= (sexyThresh + 0.10f) ||
+                hentai >= hentaiThresh
+        }
+
+        val combinedAdultScore = porn + (sexy * 0.85f)
+        // Only apply skin boost when the model already sees low neutrality (<45% neutral) and real adult/sexy signal
+        val skinBoostedScore = if (skinRatio >= 0.42f && neutral < 0.45f && (porn >= 0.15f || sexy >= 0.25f)) {
+            combinedAdultScore + (skinRatio * 0.15f)
         } else {
             combinedAdultScore
         }
@@ -45,13 +54,14 @@ data class NsfwResult(
     fun formatReason(pornThresh: Float, sexyThresh: Float, hentaiThresh: Float): String {
         val pornPct = (porn * 100).toInt()
         val sexyPct = (sexy * 100).toInt()
+        val neutralPct = (neutral * 100).toInt()
         val hentaiPct = (hentai * 100).toInt()
         val skinPct = (skinRatio * 100).toInt()
         return when {
-            porn >= pornThresh -> "נחסם עקב זיהוי תמונה לא ראויה (Porn: $pornPct%, Sexy: $sexyPct%)"
-            sexy >= sexyThresh -> "נחסם עקב זיהוי תמונה חשופה (Sexy: $sexyPct%, Porn: $pornPct%)"
-            hentai >= hentaiThresh -> "נחסם עקב זיהוי איור לא ראוי (Hentai: $hentaiPct%)"
-            else -> "נחסם עקב זיהוי חשיפת עור ותוכן ויזואלי (Sexy: $sexyPct%, Skin: $skinPct%)"
+            porn >= pornThresh -> "נחסם עקב זיהוי תמונה לא ראויה (Porn: $pornPct%, Sexy: $sexyPct%, Neutral: $neutralPct%, Skin: $skinPct%)"
+            sexy >= sexyThresh -> "נחסם עקב זיהוי תמונה חשופה (Sexy: $sexyPct%, Porn: $pornPct%, Neutral: $neutralPct%, Skin: $skinPct%)"
+            hentai >= hentaiThresh -> "נחסם עקב זיהוי איור לא ראוי (Hentai: $hentaiPct%, Neutral: $neutralPct%)"
+            else -> "נחסם עקב זיהוי חשיפת עור ותוכן ויזואלי (Sexy: $sexyPct%, Porn: $pornPct%, Neutral: $neutralPct%, Skin: $skinPct%)"
         }
     }
 }
@@ -165,6 +175,13 @@ class NsfwClassifier(private val context: Context) {
                     candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, gridBottomY, halfW, tileH))
                     candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, width - halfW, gridBottomY, halfW, tileH))
                 }
+
+                // Priority 6: Bottom Ad Banner / Lower Page Zone (catches sticky/inline ad banners at bottom of articles)
+                val bottomBannerY = (height * 0.56f).toInt().coerceAtLeast(0)
+                val bottomBannerH = (height * 0.36f).toInt().coerceAtMost(height - bottomBannerY)
+                if (bottomBannerH > 80) {
+                    candidateCrops.add(Bitmap.createBitmap(fullScreenSoftwareBitmap, 0, bottomBannerY, fullW, bottomBannerH))
+                }
             } else {
                 val cropSize = height
                 val centerX = ((width - cropSize) / 2).coerceAtLeast(0)
@@ -173,7 +190,7 @@ class NsfwClassifier(private val context: Context) {
 
             // SMART BATTERY FUNNEL:
             // Measure skin-tone density (<0.4ms each) on candidate crops first.
-            // Sort by highest skin ratio and only run heavy TFLite inference on the top 2 skin-richest regions!
+            // Sort by highest skin ratio and run TFLite inference on the top 4 skin-richest regions (including smaller ad banners)!
             val scoredCrops = candidateCrops.map { crop ->
                 val skin = skinDetector?.calculateSkinToneRatio(crop) ?: 0f
                 maxSkinRatio = max(maxSkinRatio, skin)
@@ -182,8 +199,8 @@ class NsfwClassifier(private val context: Context) {
 
             cropsToTest.addAll(candidateCrops)
 
-            // Gate 1: If no region on the entire screen has at least 4.5% skin tone, skip heavy neural net completely!
-            if (maxSkinRatio < 0.045f) {
+            // Gate 1: If no region on the entire screen has at least 3.0% skin tone, skip heavy neural net completely!
+            if (maxSkinRatio < 0.030f) {
                 val fastElapsed = SystemClock.elapsedRealtime() - startTime
                 return NsfwResult(
                     drawing = 0f,
@@ -197,8 +214,8 @@ class NsfwClassifier(private val context: Context) {
                 )
             }
 
-            // Gate 2: Run TFLite neural network ONLY on the top 2 skin-richest crops (cuts CPU work by 75%!)
-            val topCropsForAi = scoredCrops.filter { it.second >= 0.045f }.take(2)
+            // Gate 2: Run TFLite neural network on the top 4 skin-richest crops so ad banners inside articles are never diluted
+            val topCropsForAi = scoredCrops.filter { it.second >= 0.030f }.take(4)
             for ((crop, cropSkin) in topCropsForAi) {
                 val scores = runSingleInference(currentInterpreter, crop)
                 maxDrawing = max(maxDrawing, scores[0])

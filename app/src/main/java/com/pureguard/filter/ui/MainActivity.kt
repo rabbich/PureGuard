@@ -40,6 +40,7 @@ import com.pureguard.filter.service.Android10ScreenCapturer
 import com.pureguard.filter.service.FilterAccessibilityService
 import com.pureguard.filter.service.ScreenCaptureKeepAliveService
 import com.pureguard.filter.update.OtaUpdateManager
+import com.pureguard.filter.util.BlockDiagnosticReporter
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -595,6 +596,16 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 db.blockLogsDao().clearAll()
             }
+        }
+
+        binding.btnShareLastBlockFromDashboard.setOnClickListener {
+            BlockDiagnosticReporter.shareLastBlockReport(
+                context = this,
+                targetUrlOrApp = "חסימה אחרונה מלוח הבקרה",
+                blockReason = "דו\"ח אבחון אחרון",
+                pageTitle = "",
+                textSnippet = ""
+            )
         }
 
         lifecycleScope.launch {

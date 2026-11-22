@@ -56,6 +56,9 @@ abstract class PureGuardDatabase : RoomDatabase() {
         }
 
         private suspend fun seedDefaultKeywords(db: PureGuardDatabase) {
+            // Remove news/religious false-positive term from existing databases automatically on update
+            db.blockedKeywordsDao().deleteByKeyword("זנות")
+
             val existingLower = db.blockedKeywordsDao().getAll().map { it.keyword.lowercase().trim() }.toSet()
             val defaults = listOf(
                 // Explicit Adult Domains
@@ -154,7 +157,6 @@ abstract class PureGuardDatabase : RoomDatabase() {
                 BlockedKeywordEntity(keyword = "לסביות", isDomain = false),
                 BlockedKeywordEntity(keyword = "אירוטי", isDomain = false),
                 BlockedKeywordEntity(keyword = "סקסיות", isDomain = false),
-                BlockedKeywordEntity(keyword = "זנות", isDomain = false),
                 BlockedKeywordEntity(keyword = "חשפנות", isDomain = false)
             )
             val missing = defaults.filter { !existingLower.contains(it.keyword.lowercase().trim()) }
