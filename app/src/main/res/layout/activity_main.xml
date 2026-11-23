@@ -535,7 +535,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
-                        android:text="🛡️ הפעל חסימת פרסומות ו-DNS אוטומטית (לחיצה אחת)" />
+                        android:text="🌐 הגדר DNS פרטי Cloudflare Family (חוסם אתרי פורנו – 0% סוללה)" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPrivateDnsGuide"
@@ -543,8 +543,21 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="או הגדרת DNS ידנית בהגדרות (family.adguard-dns.com)"
+                        android:text="🛡️ או AdGuard Family DNS (חוסם גם פרסומות + פורנו – 0% סוללה)"
                         android:textSize="12sp" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchLockPrivateDns"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="#E8F5E9"
+                        android:checked="false"
+                        android:padding="10dp"
+                        android:text="🔒 נעל את מסך הגדרות ה-DNS הפרטי (מונע שינוי או כיבוי)"
+                        android:textColor="#1B5E20"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchPauseFilterTesting"

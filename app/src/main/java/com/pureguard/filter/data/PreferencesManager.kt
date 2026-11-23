@@ -64,6 +64,21 @@ class PreferencesManager(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_DNS_VPN_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_AUTO_DNS_VPN_ENABLED, value).apply()
 
+    /**
+     * v5.0 Ultra-Light Architecture:
+     * Visual AI / OCR / Screenshot scanning is OFF by default for <1% battery usage.
+     */
+    var isVisualAiEnabled: Boolean
+        get() = prefs.getBoolean(KEY_VISUAL_AI_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_VISUAL_AI_ENABLED, value).apply()
+
+    /**
+     * Locks Android's Private DNS settings screen so the user cannot turn off Cloudflare/AdGuard DNS.
+     */
+    var lockPrivateDnsSettings: Boolean
+        get() = isLockdownEnabled || prefs.getBoolean(KEY_LOCK_PRIVATE_DNS_SETTINGS, false)
+        set(value) = prefs.edit().putBoolean(KEY_LOCK_PRIVATE_DNS_SETTINGS, value).apply()
+
     var enforceSafeSearchAndRestrictedMode: Boolean
         get() = prefs.getBoolean(KEY_ENFORCE_SAFESEARCH, true)
         set(value) = prefs.edit().putBoolean(KEY_ENFORCE_SAFESEARCH, value).apply()
@@ -105,6 +120,8 @@ class PreferencesManager(context: Context) {
         private const val KEY_BLOCK_SHORTS_REELS = "block_youtube_shorts_and_reels"
         private const val KEY_BLOCK_INCOGNITO_MODE = "block_incognito_mode"
         private const val KEY_AUTO_DNS_VPN_ENABLED = "auto_dns_vpn_enabled"
+        private const val KEY_VISUAL_AI_ENABLED = "visual_ai_enabled_v5"
+        private const val KEY_LOCK_PRIVATE_DNS_SETTINGS = "lock_private_dns_settings"
 
         const val PROFILE_STRICT = 0
         const val PROFILE_MODERATE_SHOPPING = 1

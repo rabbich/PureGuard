@@ -327,37 +327,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnAutoDnsToggle.setOnClickListener {
-            if (AdGuardDnsVpnService.isRunning) {
-                AdGuardDnsVpnService.stop(this)
-                Toast.makeText(this, "סינון ה-DNS האוטומטי כובה", Toast.LENGTH_SHORT).show()
-                refreshServiceAndLockdownStatus()
-            } else {
-                activateOneClickAutoDns()
-            }
+            openPrivateDnsDialog(CLOUDFLARE_FAMILY_DNS, "Cloudflare for Families (חוסם אתרי פורנו ונוזקות – מהיר במיוחד, 0% סוללה)")
         }
 
         binding.btnPrivateDnsGuide.setOnClickListener {
-            openPrivateDnsDialog()
+            openPrivateDnsDialog(ADGUARD_FAMILY_DNS, "AdGuard Family DNS (חוסם פרסומות + אתרי פורנו + כופה SafeSearch, 0% סוללה)")
+        }
+
+        binding.switchLockPrivateDns.isChecked = prefs.lockPrivateDnsSettings
+        binding.switchLockPrivateDns.setOnCheckedChangeListener { _, isChecked ->
+            prefs.lockPrivateDnsSettings = isChecked
+            val msg = if (isChecked) {
+                "🔒 מסך הגדרות ה-DNS הפרטי נעול כעת!"
+            } else {
+                "🔓 נעילת מסך ה-DNS הוסרה זמנית (לעריכה)"
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun activateOneClickAutoDns() {
-        try {
-            val prepIntent = VpnService.prepare(this)
-            if (prepIntent != null) {
-                dnsVpnLauncher.launch(prepIntent)
-            } else {
-                startService(Intent(this, AdGuardDnsVpnService::class.java))
-                Toast.makeText(this, "סינון פרסומות ופורנו (AdGuard Family DNS) הופעל אוטומטית! 🛡️", Toast.LENGTH_LONG).show()
-                if (isWizardActive && currentWizardStep == 3) {
-                    currentWizardStep = 4
-                    renderWizardVisibilityAndStep()
-                }
-                refreshServiceAndLockdownStatus()
-            }
-        } catch (e: Exception) {
-            openPrivateDnsDialog()
-        }
+        openPrivateDnsDialog(CLOUDFLARE_FAMILY_DNS, "Cloudflare for Families (חוסם אתרי פורנו ונוזקות – 0% סוללה)")
     }
 
     private fun launchAndroid10ScreenCapture() {
@@ -365,18 +355,28 @@ class MainActivity : AppCompatActivity() {
         screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
     }
 
-    private fun openPrivateDnsDialog() {
+    private fun openPrivateDnsDialog(
+        dnsHostname: String = CLOUDFLARE_FAMILY_DNS,
+        descriptionHe: String = "Cloudflare for Families (חוסם אתרי פורנו ונוזקות – 0% סוללה)"
+    ) {
+        // Temporarily pause DNS screen lock while opening Settings to configure it
+        if (prefs.lockPrivateDnsSettings && !prefs.isLockdownEnabled) {
+            prefs.lockPrivateDnsSettings = false
+            binding.switchLockPrivateDns.isChecked = false
+        }
+
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Private DNS", ADGUARD_FAMILY_DNS))
+        clipboard.setPrimaryClip(ClipData.newPlainText("Private DNS", dnsHostname))
 
         AlertDialog.Builder(this)
-            .setTitle("חסימת פרסומות + סינון משפחתי (0% סוללה)")
+            .setTitle("הגדרת DNS פרטי (0% סוללה)")
             .setMessage(
-                "הכתובת $ADGUARD_FAMILY_DNS הועתקה ללוח!\n" +
-                    "כתובת זו חוסמת את כל הפרסומות באתרים ובאפליקציות (כולל באנרים של ספרים/טאבולה/גוגל) + אתרי מבוגרים + כופה חיפוש בטוח.\n\n" +
+                "הכתובת $dnsHostname הועתקה ללוח!\n" +
+                    "$descriptionHe\n\n" +
                     "1. לחץ על 'פתח הגדרות חיבורים'\n" +
                     "2. בחר ב-'DNS פרטי' (Private DNS)\n" +
-                    "3. בחר 'שם מארח של ספק DNS פרטי' והדבק:\n$ADGUARD_FAMILY_DNS"
+                    "3. בחר 'שם מארח של ספק DNS פרטי' והדבק:\n$dnsHostname\n" +
+                    "4. חזור לכאן והפעל את המתג '🔒 נעל את מסך הגדרות ה-DNS הפרטי'."
             )
             .setPositiveButton("פתח הגדרות חיבורים") { _, _ ->
                 try {
@@ -792,53 +792,22 @@ class MainActivity : AppCompatActivity() {
         }
 
         val dnsHost = getConfiguredPrivateDnsHost()
-        val isAutoDnsVpnActive = AdGuardDnsVpnService.isRunning
-        if (isAutoDnsVpnActive) {
-            binding.tvPrivateDnsStatus.text = "סינון פרסומות ופורנו (AdGuard Family DNS): פעיל אוטומטית ✅"
+        if (dnsHost != null) {
+            binding.tvPrivateDnsStatus.text = "DNS פרטי פעיל: $dnsHost (0% סוללה) ✅"
             binding.tvPrivateDnsStatus.setTextColor(0xFF2E7D32.toInt())
-            binding.btnAutoDnsToggle.text = "🛡️ חסימת פרסומות ו-DNS אוטומטית פעילה ✅ (לחץ לכיבוי)"
-            binding.tvWizardStep3Status.text = "סטטוס DNS: חסימת פרסומות ופורנו פעילה אוטומטית ✅"
-            binding.tvWizardStep3Status.setTextColor(0xFF2E7D32.toInt())
-        } else if (dnsHost != null) {
-            val isAdGuard = dnsHost.equals(ADGUARD_FAMILY_DNS, ignoreCase = true)
-            val dnsMsg = if (isAdGuard) {
-                "DNS פרטי: מוגדר ($dnsHost) ✅"
-            } else {
-                "DNS פרטי: מוגדר ($dnsHost)"
-            }
-            binding.tvPrivateDnsStatus.text = dnsMsg
-            binding.tvPrivateDnsStatus.setTextColor(0xFF2E7D32.toInt())
-            binding.btnAutoDnsToggle.text = "🛡️ הפעל חסימת פרסומות ו-DNS אוטומטית (לחיצה אחת)"
             binding.tvWizardStep3Status.text = "סטטוס DNS פרטי: מוגדר ($dnsHost) ✅"
             binding.tvWizardStep3Status.setTextColor(0xFF2E7D32.toInt())
         } else {
-            binding.tvPrivateDnsStatus.text = "DNS (חוסם פרסומות ופורנו): לא פעיל ⚠️ (לחץ להפעלה בלחיצה אחת)"
-            binding.tvPrivateDnsStatus.setTextColor(0xFF546E7A.toInt())
-            binding.btnAutoDnsToggle.text = "🛡️ הפעל חסימת פרסומות ו-DNS אוטומטית (לחיצה אחת)"
-            binding.tvWizardStep3Status.text = "סטטוס DNS: לחץ על הכפתור למטה להפעלה אוטומטית בלחיצה אחת ⏳"
+            binding.tvPrivateDnsStatus.text = "DNS פרטי: לא מוגדר ⚠️ (לחץ להעתקת Cloudflare / AdGuard)"
+            binding.tvPrivateDnsStatus.setTextColor(0xFFC62828.toInt())
+            binding.tvWizardStep3Status.text = "סטטוס DNS: לחץ להעתקת כתובת Cloudflare Family ⏳"
             binding.tvWizardStep3Status.setTextColor(0xFF546E7A.toInt())
         }
+        binding.switchLockPrivateDns.isChecked = prefs.lockPrivateDnsSettings
+        binding.switchLockPrivateDns.isEnabled = !prefs.isLockdownEnabled
 
-        val hasModelFile = try {
-            val assetsList = assets.list("") ?: emptyArray()
-            assetsList.contains(NsfwClassifier.MODEL_FILE)
-        } catch (_: Exception) {
-            false
-        }
-
-        binding.tvModelStatus.text = if (hasModelFile) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                if (Android10ScreenCapturer.isReady) {
-                    "מודל AI + OCR (אנדרואיד 10): פעיל ודוגם בזיכרון ✅"
-                } else {
-                    "מודל AI + OCR (אנדרואיד 10): לחץ להפעלת לכידת מסך ⚠️"
-                }
-            } else {
-                "מודל AI מקומי (nsfw.tflite) + OCR: מותקן וזמין בזיכרון ✅"
-            }
-        } else {
-            "מודל AI מקומי (nsfw.tflite): ממתין לקובץ מודל (הגנת טקסט ודומיינים פעילה)"
-        }
+        binding.tvModelStatus.text =
+            "מצב Lite (0% סוללה): סריקת תמונות/AI כבויה – סינון DNS + אתרי פורנו + SafeSearch בלבד 🔋✅"
 
         if (!prefs.isLockdownEnabled) {
             binding.switchPauseFilterTesting.visibility = View.VISIBLE
@@ -883,6 +852,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val CLOUDFLARE_FAMILY_DNS = "family.cloudflare-dns.com"
         private const val ADGUARD_FAMILY_DNS = "family.adguard-dns.com"
     }
 }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.pureguard.filter"
         minSdk = 29
         targetSdk = 34
-        versionCode = 12
-        versionName = "4.7.0-Kodeshield"
+        versionCode = 13
+        versionName = "5.0.0-Kodeshield-Lite"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
