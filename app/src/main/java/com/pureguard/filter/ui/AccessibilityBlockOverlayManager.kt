@@ -72,12 +72,7 @@ class AccessibilityBlockOverlayManager(
                     binding.tvAiRecheckStatus.visibility = View.VISIBLE
                     binding.tvAiRecheckStatus.text = "מבצע בדיקת הקשר חכמה (AI)..."
 
-                    val isShoppingAllowed = (prefs.filterProfileLevel == PreferencesManager.PROFILE_MODERATE_SHOPPING)
-                    val extraProfileNote = if (isShoppingAllowed) {
-                        "\n[פרופיל קניות פתוח: אם מדובר באתר קניות אופנה/ביגוד לגיטימי ללא פורנוגרפיה, אשר כבטוח]"
-                    } else {
-                        "\n[פרופיל שמירת עיניים מחמיר: אל תאשר דפי הלבשה תחתונה או דוגמנות חושפנית]"
-                    }
+                    val extraProfileNote = "\n[מגן הקודש: אשר כבטוח רק אם מדובר בתוכן נקי וראוי לחלוטין]"
 
                     serviceScope.launch {
                         val eval = geminiClient.evaluateContext(
@@ -140,7 +135,7 @@ class AccessibilityBlockOverlayManager(
                     }
                     Toast.makeText(
                         service,
-                        "אושר חד-פעמית ל-15 דקות (מצב בדיקות)",
+                        "אושר חד-פעמית ל-15 דקות (מצב ניסיון)",
                         Toast.LENGTH_SHORT
                     ).show()
                     dismissOverlayImmediate()

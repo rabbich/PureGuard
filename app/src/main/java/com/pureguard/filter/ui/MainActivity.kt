@@ -1,15 +1,11 @@
 package com.pureguard.filter.ui
 
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
 import android.net.Uri
-import android.net.VpnService
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.ActionMode
@@ -22,27 +18,23 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.pureguard.filter.admin.LockdownManager
-import com.pureguard.filter.ai.NsfwClassifier
 import com.pureguard.filter.data.BlockLogEntity
 import com.pureguard.filter.data.BlockedAppEntity
 import com.pureguard.filter.data.BlockedKeywordEntity
 import com.pureguard.filter.data.PreferencesManager
 import com.pureguard.filter.data.PureGuardDatabase
 import com.pureguard.filter.databinding.ActivityMainBinding
-import com.pureguard.filter.service.AdGuardDnsVpnService
-import com.pureguard.filter.service.Android10ScreenCapturer
 import com.pureguard.filter.service.FilterAccessibilityService
-import com.pureguard.filter.service.ScreenCaptureKeepAliveService
 import com.pureguard.filter.update.OtaUpdateManager
 import com.pureguard.filter.util.BlockDiagnosticReporter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -59,43 +51,10 @@ class MainActivity : AppCompatActivity() {
     private var isWizardActive = false
     private var currentWizardStep = 1
     private var wasServiceEnabledLastCheck = false
-    private var cachedKeywords: List<BlockedKeywordEntity> = emptyList()
+    private var cachedDomains: List<BlockedKeywordEntity> = emptyList()
+    private var cachedBlockedApps: List<BlockedAppEntity> = emptyList()
     private var cachedLogsCount: Int = 0
     private var isLogsExpanded = false
-    private var isApiKeyExpanded = false
-    private var isUpdatingProfileUi = false
-
-    private val dnsVpnLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            startService(Intent(this, AdGuardDnsVpnService::class.java))
-            Toast.makeText(this, "סינון פרסומות ופורנו (AdGuard Family DNS) הופעל אוטומטית! 🛡️", Toast.LENGTH_LONG).show()
-            if (isWizardActive && currentWizardStep == 3) {
-                currentWizardStep = 4
-                renderWizardVisibilityAndStep()
-            }
-            refreshServiceAndLockdownStatus()
-        } else {
-            Toast.makeText(this, "יש לאשר חיבור DNS כדי להפעיל סינון פרסומות אוטומטי", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private val screenCaptureLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val serviceIntent = Intent(this, ScreenCaptureKeepAliveService::class.java).apply {
-                putExtra(ScreenCaptureKeepAliveService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(ScreenCaptureKeepAliveService.EXTRA_RESULT_DATA, result.data)
-            }
-            ContextCompat.startForegroundService(this, serviceIntent)
-            Toast.makeText(this, "סריקת תמונות AI ו-OCR הופעלה בהצלחה לאנדרואיד 10! ✅", Toast.LENGTH_LONG).show()
-            refreshServiceAndLockdownStatus()
-        } else {
-            Toast.makeText(this, "יש לאשר לכידת מסך כדי ש-AI יזהה תמונות באנדרואיד 10", Toast.LENGTH_LONG).show()
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,29 +70,28 @@ class MainActivity : AppCompatActivity() {
         wasServiceEnabledLastCheck = serviceOn
         if (!prefs.isSetupWizardCompleted || !serviceOn) {
             isWizardActive = true
-            currentWizardStep = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
+            currentWizardStep = if (serviceOn) 2 else 1
         }
 
         setupWizard()
-        setupCard1FilterStatus()
-        setupCard2KeywordsAppsAndSliders()
-        setupCard3BlockLogs()
-        setupCard4LockdownControl()
+        setupCard1ProtectionAndDns()
+        setupCard2WebsitesAndApps()
+        setupCard3LogsAndLockdown()
         renderWizardVisibilityAndStep()
     }
 
     override fun onResume() {
         super.onResume()
-        refreshServiceAndLockdownStatus()
+        refreshStatusUi()
     }
 
     private fun setupWizard() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            binding.tvWizardStep1Note.text =
-                "במכשיר זה (מתחת לאנדרואיד 13) אין חסימת 'הגדרות מוגבלות' – ניתן לעבור ישירות לשלב הבא."
+        // Step 1: Open Accessibility FIRST (Android 13/14 reveals "Allow restricted settings" in App Info only AFTER a blocked attempt!)
+        binding.btnWizardOpenAccessibility.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        val openAppInfoClickListener = View.OnClickListener {
+        binding.btnWizardOpenAppInfo.setOnClickListener {
             try {
                 startActivity(
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -142,47 +100,27 @@ class MainActivity : AppCompatActivity() {
                 )
                 Toast.makeText(
                     this,
-                    "גלול למטה (או תפריט 3 נקודות) ולחץ 'אפשר הגדרות מוגבלות'",
+                    "גלול מטה (או תפריט 3 נקודות) ולחץ 'אפשר הגדרות מוגבלות'",
                     Toast.LENGTH_LONG
                 ).show()
-                if (isWizardActive && currentWizardStep == 1) {
-                    currentWizardStep = 2
-                    renderWizardVisibilityAndStep()
-                }
             } catch (_: Exception) {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             }
         }
-        binding.btnWizardOpenAppInfo.setOnClickListener(openAppInfoClickListener)
-        binding.btnWizardStep2OpenAppInfo.setOnClickListener(openAppInfoClickListener)
 
-        binding.btnWizardOpenAccessibility.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        // Step 2: Private DNS setup (0% battery)
+        binding.btnWizardDnsCloudflare.setOnClickListener {
+            openPrivateDnsInstructionsDialog(
+                CLOUDFLARE_FAMILY_DNS,
+                "Cloudflare Family – סינון רשת נקי ומהיר במיוחד (0% סוללה)"
+            )
         }
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            binding.btnWizardAndroid10Vision.visibility = View.VISIBLE
-            binding.btnWizardAndroid10Vision.setOnClickListener {
-                launchAndroid10ScreenCapture()
-            }
-        }
-
-        binding.btnWizardAutoDns.setOnClickListener {
-            activateOneClickAutoDns()
-        }
-
-        binding.btnWizardPrivateDns.setOnClickListener {
-            openPrivateDnsDialog()
-        }
-
-        binding.rgWizardProfile.setOnCheckedChangeListener { _, checkedId ->
-            if (isUpdatingProfileUi) return@setOnCheckedChangeListener
-            val level = if (checkedId == binding.rbWizardProfileModerate.id) {
-                PreferencesManager.PROFILE_MODERATE_SHOPPING
-            } else {
-                PreferencesManager.PROFILE_STRICT
-            }
-            applyProfileSelection(level, showToast = false)
+        binding.btnWizardDnsAdGuard.setOnClickListener {
+            openPrivateDnsInstructionsDialog(
+                ADGUARD_FAMILY_DNS,
+                "AdGuard Family – סינון רשת נקי + חסימת פרסומות (0% סוללה)"
+            )
         }
 
         binding.btnWizardPrev.setOnClickListener {
@@ -193,16 +131,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnWizardNext.setOnClickListener {
-            if (currentWizardStep < 4) {
+            if (currentWizardStep < 2) {
                 currentWizardStep++
                 renderWizardVisibilityAndStep()
             } else {
-                val chosenLevel = if (binding.rbWizardProfileModerate.isChecked) {
-                    PreferencesManager.PROFILE_MODERATE_SHOPPING
-                } else {
-                    PreferencesManager.PROFILE_STRICT
-                }
-                applyProfileSelection(chosenLevel, showToast = false)
                 prefs.isSetupWizardCompleted = true
                 isWizardActive = false
                 renderWizardVisibilityAndStep()
@@ -218,9 +150,9 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnOpenWizard.setOnClickListener {
             isWizardActive = true
-            currentWizardStep = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 2 else 1
+            currentWizardStep = 1
             renderWizardVisibilityAndStep()
-            refreshServiceAndLockdownStatus()
+            refreshStatusUi()
         }
     }
 
@@ -234,42 +166,63 @@ class MainActivity : AppCompatActivity() {
         binding.layoutWizardContainer.visibility = View.VISIBLE
         binding.layoutDashboardContainer.visibility = View.GONE
 
-        binding.tvWizardStepIndicator.text = "שלב $currentWizardStep מתוך 4"
+        binding.tvWizardStepIndicator.text = "שלב $currentWizardStep מתוך 2"
         binding.progressWizard.progress = currentWizardStep
 
-        binding.wizardStep1.visibility = if (currentWizardStep == 1) View.VISIBLE else View.GONE
-        binding.wizardStep2.visibility = if (currentWizardStep == 2) View.VISIBLE else View.GONE
-        binding.wizardStep3.visibility = if (currentWizardStep == 3) View.VISIBLE else View.GONE
-        binding.wizardStep4.visibility = if (currentWizardStep == 4) View.VISIBLE else View.GONE
+        binding.layoutWizardStep1.visibility = if (currentWizardStep == 1) View.VISIBLE else View.GONE
+        binding.layoutWizardStep2.visibility = if (currentWizardStep == 2) View.VISIBLE else View.GONE
 
         binding.btnWizardPrev.visibility = if (currentWizardStep > 1) View.VISIBLE else View.INVISIBLE
-        binding.btnWizardNext.text = if (currentWizardStep == 4) "סיום והפעלת הגנה ✓" else "הבא ←"
-
-        if (currentWizardStep == 4) {
-            isUpdatingProfileUi = true
-            if (prefs.filterProfileLevel == PreferencesManager.PROFILE_MODERATE_SHOPPING) {
-                binding.rbWizardProfileModerate.isChecked = true
-            } else {
-                binding.rbWizardProfileStrict.isChecked = true
-            }
-            isUpdatingProfileUi = false
-        }
+        binding.btnWizardNext.text = if (currentWizardStep == 2) "סיום וכניסה לאפליקציה ✅" else "הבא ⬅️"
     }
 
-    private fun setupCard1FilterStatus() {
+    private fun setupCard1ProtectionAndDns() {
+        binding.btnOpenAccessibility.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        binding.btnConfigureDns.setOnClickListener {
+            showDnsProviderChooserDialog()
+        }
+
+        binding.switchLockPrivateDns.isChecked = prefs.lockPrivateDnsSettings
+        binding.switchLockPrivateDns.setOnCheckedChangeListener { _, isChecked ->
+            prefs.lockPrivateDnsSettings = isChecked
+            val msg = if (isChecked) {
+                "🔒 מסך הגדרות ה-DNS הפרטי נעול כעת"
+            } else {
+                "🔓 נעילת מסך ה-DNS הוסרה זמנית"
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+
+        binding.switchEnforceSafeSearch.isChecked = prefs.enforceSafeSearchAndRestrictedMode
+        binding.switchEnforceSafeSearch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.enforceSafeSearchAndRestrictedMode = isChecked
+        }
+
         binding.switchPauseFilterTesting.isChecked = prefs.isFilterPausedForTesting
         binding.switchPauseFilterTesting.setOnCheckedChangeListener { _, isChecked ->
+            if (prefs.isLockdownEnabled) {
+                binding.switchPauseFilterTesting.isChecked = false
+                Toast.makeText(this, "לא ניתן להשהות את ההגנה במצב נעילה קבועה", Toast.LENGTH_SHORT).show()
+                return@setOnCheckedChangeListener
+            }
             prefs.isFilterPausedForTesting = isChecked
-            val msg = if (isChecked) "הסינון הושהה זמנית (מצב בדיקות)" else "הסינון חזר לפעול! 🛡️"
-            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-            refreshServiceAndLockdownStatus()
+            val statusMsg = if (isChecked) "ההגנה הושהתה זמנית" else "ההגנה פעילה ✅"
+            Toast.makeText(this, statusMsg, Toast.LENGTH_SHORT).show()
         }
 
         binding.btnOtaUpdate.setOnClickListener {
             binding.btnOtaUpdate.isEnabled = false
+            binding.progressOtaUpdate.visibility = View.VISIBLE
             binding.tvOtaStatus.visibility = View.VISIBLE
+            binding.progressOtaUpdate.progress = 0
+            binding.tvOtaStatus.text = "בודק עדכון גרסה..."
+
             lifecycleScope.launch {
-                val res = otaUpdateManager.downloadAndInstallLatestApk { _, statusText ->
+                val res = otaUpdateManager.downloadAndInstallLatestApk { pct, statusText ->
+                    binding.progressOtaUpdate.progress = pct
                     binding.tvOtaStatus.text = statusText
                 }
                 binding.btnOtaUpdate.isEnabled = true
@@ -278,88 +231,33 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
 
-        binding.switchBlockShorts.isChecked = prefs.blockYoutubeShortsAndReels
-        binding.switchBlockShorts.setOnCheckedChangeListener { _, isChecked ->
-            prefs.blockYoutubeShortsAndReels = isChecked
-        }
-
-        binding.switchBlockIncognito.isChecked = prefs.blockIncognitoMode
-        binding.switchBlockIncognito.setOnCheckedChangeListener { _, isChecked ->
-            prefs.blockIncognitoMode = isChecked
-        }
-
-        binding.switchEnforceSafeSearch.isChecked = prefs.enforceSafeSearchAndRestrictedMode
-        binding.switchEnforceSafeSearch.setOnCheckedChangeListener { _, isChecked ->
-            prefs.enforceSafeSearchAndRestrictedMode = isChecked
-        }
-
-        binding.switchBlockGrokAi.isChecked = prefs.blockUncensoredAiAndGrok
-        binding.switchBlockGrokAi.setOnCheckedChangeListener { _, isChecked ->
-            prefs.blockUncensoredAiAndGrok = isChecked
-        }
-
-        binding.switchDebugToast.isChecked = prefs.showDebugToast
-        binding.switchDebugToast.setOnCheckedChangeListener { _, isChecked ->
-            prefs.showDebugToast = isChecked
-        }
-
-        binding.btnToggleApiKeySection.setOnClickListener {
-            isApiKeyExpanded = !isApiKeyExpanded
-            binding.containerApiKey.visibility = if (isApiKeyExpanded) View.VISIBLE else View.GONE
-        }
-
-        binding.etGeminiApiKey.setText(prefs.geminiApiKey)
-        binding.btnSaveApiKey.setOnClickListener {
-            prefs.geminiApiKey = binding.etGeminiApiKey.text?.toString().orEmpty()
-            Toast.makeText(this, "מפתח Gemini API נשמר בהצלחה", Toast.LENGTH_SHORT).show()
-        }
-
-        binding.btnOpenAccessibility.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            binding.btnEnableAndroid10Vision.visibility = View.VISIBLE
-            binding.btnEnableAndroid10Vision.setOnClickListener {
-                launchAndroid10ScreenCapture()
+    private fun showDnsProviderChooserDialog() {
+        val options = arrayOf(
+            "🌐 Cloudflare Family (מומלץ ומהיר – סינון אתרים לא ראויים)",
+            "🛡️ AdGuard Family (סינון אתרים לא ראויים + חסימת פרסומות)"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("בחר ספק סינון רשת נקי (0% סוללה)")
+            .setItems(options) { _, which ->
+                if (which == 0) {
+                    openPrivateDnsInstructionsDialog(
+                        CLOUDFLARE_FAMILY_DNS,
+                        "Cloudflare Family – סינון רשת נקי ומהיר במיוחד (0% סוללה)"
+                    )
+                } else {
+                    openPrivateDnsInstructionsDialog(
+                        ADGUARD_FAMILY_DNS,
+                        "AdGuard Family – סינון רשת נקי + חסימת פרסומות (0% סוללה)"
+                    )
+                }
             }
-        }
-
-        binding.btnAutoDnsToggle.setOnClickListener {
-            openPrivateDnsDialog(CLOUDFLARE_FAMILY_DNS, "Cloudflare for Families (חוסם אתרי פורנו ונוזקות – מהיר במיוחד, 0% סוללה)")
-        }
-
-        binding.btnPrivateDnsGuide.setOnClickListener {
-            openPrivateDnsDialog(ADGUARD_FAMILY_DNS, "AdGuard Family DNS (חוסם פרסומות + אתרי פורנו + כופה SafeSearch, 0% סוללה)")
-        }
-
-        binding.switchLockPrivateDns.isChecked = prefs.lockPrivateDnsSettings
-        binding.switchLockPrivateDns.setOnCheckedChangeListener { _, isChecked ->
-            prefs.lockPrivateDnsSettings = isChecked
-            val msg = if (isChecked) {
-                "🔒 מסך הגדרות ה-DNS הפרטי נעול כעת!"
-            } else {
-                "🔓 נעילת מסך ה-DNS הוסרה זמנית (לעריכה)"
-            }
-            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-        }
+            .setNegativeButton("ביטול", null)
+            .show()
     }
 
-    private fun activateOneClickAutoDns() {
-        openPrivateDnsDialog(CLOUDFLARE_FAMILY_DNS, "Cloudflare for Families (חוסם אתרי פורנו ונוזקות – 0% סוללה)")
-    }
-
-    private fun launchAndroid10ScreenCapture() {
-        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
-    }
-
-    private fun openPrivateDnsDialog(
-        dnsHostname: String = CLOUDFLARE_FAMILY_DNS,
-        descriptionHe: String = "Cloudflare for Families (חוסם אתרי פורנו ונוזקות – 0% סוללה)"
-    ) {
-        // Temporarily pause DNS screen lock while opening Settings to configure it
+    private fun openPrivateDnsInstructionsDialog(dnsHostname: String, descriptionHe: String) {
         if (prefs.lockPrivateDnsSettings && !prefs.isLockdownEnabled) {
             prefs.lockPrivateDnsSettings = false
             binding.switchLockPrivateDns.isChecked = false
@@ -369,14 +267,14 @@ class MainActivity : AppCompatActivity() {
         clipboard.setPrimaryClip(ClipData.newPlainText("Private DNS", dnsHostname))
 
         AlertDialog.Builder(this)
-            .setTitle("הגדרת DNS פרטי (0% סוללה)")
+            .setTitle("הגדרת סינון רשת נקי (DNS פרטי)")
             .setMessage(
                 "הכתובת $dnsHostname הועתקה ללוח!\n" +
                     "$descriptionHe\n\n" +
                     "1. לחץ על 'פתח הגדרות חיבורים'\n" +
                     "2. בחר ב-'DNS פרטי' (Private DNS)\n" +
                     "3. בחר 'שם מארח של ספק DNS פרטי' והדבק:\n$dnsHostname\n" +
-                    "4. חזור לכאן והפעל את המתג '🔒 נעל את מסך הגדרות ה-DNS הפרטי'."
+                    "4. חזור לאפליקציה והפעל את '🔒 נעל את מסך הגדרות ה-DNS הפרטי'."
             )
             .setPositiveButton("פתח הגדרות חיבורים") { _, _ ->
                 try {
@@ -389,196 +287,180 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun setupCard2KeywordsAppsAndSliders() {
-        syncProfileAndSlidersUi()
-
-        binding.rgFilterProfile.setOnCheckedChangeListener { _, checkedId ->
-            if (isUpdatingProfileUi) return@setOnCheckedChangeListener
-            val level = when (checkedId) {
-                binding.rbProfileStrict.id -> PreferencesManager.PROFILE_STRICT
-                binding.rbProfileModerateShopping.id -> PreferencesManager.PROFILE_MODERATE_SHOPPING
-                else -> PreferencesManager.PROFILE_CUSTOM
+    private fun setupCard2WebsitesAndApps() {
+        binding.btnAddDomain.setOnClickListener {
+            val raw = binding.etNewDomain.text?.toString()?.trim()?.lowercase().orEmpty()
+                .removePrefix("https://")
+                .removePrefix("http://")
+                .removePrefix("www.")
+                .substringBefore("/")
+            if (raw.isEmpty() || !raw.contains(".")) {
+                Toast.makeText(this, "נא להזין כתובת אתר תקינה (למשל example.com)", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
             }
-            applyProfileSelection(level, showToast = true)
-        }
-
-        binding.sliderPornThreshold.addOnChangeListener { _, value, fromUser ->
-            val pct = value.toInt()
-            binding.tvPornThresholdLabel.text = "רגישות סף Porn: ${pct}%"
-            prefs.pornThreshold = pct / 100f
-            if (fromUser && !isUpdatingProfileUi) {
-                isUpdatingProfileUi = true
-                prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
-                binding.rbProfileCustom.isChecked = true
-                isUpdatingProfileUi = false
-            }
-        }
-
-        binding.sliderSexyThreshold.addOnChangeListener { _, value, fromUser ->
-            val pct = value.toInt()
-            binding.tvSexyThresholdLabel.text = "רגישות סף Sexy: ${pct}%"
-            prefs.sexyThreshold = pct / 100f
-            if (fromUser && !isUpdatingProfileUi) {
-                isUpdatingProfileUi = true
-                prefs.filterProfileLevel = PreferencesManager.PROFILE_CUSTOM
-                binding.rbProfileCustom.isChecked = true
-                isUpdatingProfileUi = false
-            }
-        }
-
-        binding.btnManageKeywordsDialog.setOnClickListener {
-            showManageKeywordsDialog()
-        }
-
-        binding.btnAddKeyword.setOnClickListener {
-            val raw = binding.etNewKeyword.text?.toString()?.trim().orEmpty()
-            if (raw.isEmpty()) return@setOnClickListener
-            val isDomain = raw.contains(".") && !raw.contains(" ")
             lifecycleScope.launch {
                 db.blockedKeywordsDao().insert(
-                    BlockedKeywordEntity(keyword = raw, isDomain = isDomain)
+                    BlockedKeywordEntity(keyword = raw, isDomain = true)
                 )
-                binding.etNewKeyword.setText("")
-                Toast.makeText(this@MainActivity, "נוסף בהצלחה למאגר הסינון ✅", Toast.LENGTH_SHORT).show()
+                binding.etNewDomain.setText("")
+                Toast.makeText(this@MainActivity, "האתר $raw נוסף לרשימת החסימה ✅", Toast.LENGTH_SHORT).show()
             }
         }
 
-        binding.btnAddBlockedApp.setOnClickListener {
-            val pkg = binding.etNewBlockedPackage.text?.toString()?.trim().orEmpty()
-            if (pkg.isEmpty()) return@setOnClickListener
-            lifecycleScope.launch {
-                db.blockedAppsDao().insert(
-                    BlockedAppEntity(packageName = pkg, appLabel = pkg)
-                )
-                binding.etNewBlockedPackage.setText("")
-            }
+        binding.btnManageDomainsDialog.setOnClickListener {
+            showManageDomainsDialog()
+        }
+
+        binding.btnPickAppToBlock.setOnClickListener {
+            showInstalledAppsPickerDialog()
         }
 
         lifecycleScope.launch {
-            db.blockedKeywordsDao().observeAll().collectLatest { keywords ->
-                cachedKeywords = keywords
-                updateKeywordsButtonLabel()
+            db.blockedKeywordsDao().observeAll().collectLatest { list ->
+                cachedDomains = list.filter { it.isDomain }
+                binding.btnManageDomainsDialog.text =
+                    "🔒 ניהול אתרים חסומים (${cachedDomains.size} אתרים)"
             }
         }
 
         lifecycleScope.launch {
             db.blockedAppsDao().observeAll().collectLatest { apps ->
+                cachedBlockedApps = apps
                 renderBlockedAppsList(apps)
             }
         }
     }
 
-    private fun applyProfileSelection(level: Int, showToast: Boolean) {
-        prefs.filterProfileLevel = level
-        when (level) {
-            PreferencesManager.PROFILE_STRICT -> {
-                prefs.pornThreshold = 0.65f
-                prefs.sexyThreshold = 0.55f
-                if (showToast) {
-                    Toast.makeText(this, "הופעל פרופיל: שמירת עיניים מלאה (מחמיר) 🛡️", Toast.LENGTH_SHORT).show()
-                }
-            }
-            PreferencesManager.PROFILE_MODERATE_SHOPPING -> {
-                prefs.pornThreshold = 0.72f
-                prefs.sexyThreshold = 0.85f
-                if (showToast) {
-                    Toast.makeText(this, "הופעל פרופיל: מותאם לנשים (קניות ואופנה פתוחים) 🛍️", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-        syncProfileAndSlidersUi()
-    }
-
-    private fun syncProfileAndSlidersUi() {
-        isUpdatingProfileUi = true
-        when (prefs.filterProfileLevel) {
-            PreferencesManager.PROFILE_STRICT -> {
-                binding.rbProfileStrict.isChecked = true
-                binding.rbWizardProfileStrict.isChecked = true
-            }
-            PreferencesManager.PROFILE_MODERATE_SHOPPING -> {
-                binding.rbProfileModerateShopping.isChecked = true
-                binding.rbWizardProfileModerate.isChecked = true
-            }
-            else -> binding.rbProfileCustom.isChecked = true
-        }
-
-        val pornPct = (prefs.pornThreshold * 100).toInt().coerceIn(30, 90)
-        val sexyPct = (prefs.sexyThreshold * 100).toInt().coerceIn(30, 90)
-
-        binding.sliderPornThreshold.value = pornPct.toFloat()
-        binding.tvPornThresholdLabel.text = "רגישות סף Porn: ${pornPct}%"
-
-        binding.sliderSexyThreshold.value = sexyPct.toFloat()
-        binding.tvSexyThresholdLabel.text = if (prefs.filterProfileLevel == PreferencesManager.PROFILE_MODERATE_SHOPPING) {
-            "רגישות סף Sexy: ${sexyPct}% (קניות פתוחות)"
-        } else {
-            "רגישות סף Sexy: ${sexyPct}%"
-        }
-        isUpdatingProfileUi = false
-    }
-
-    private fun updateKeywordsButtonLabel() {
-        binding.btnManageKeywordsDialog.text =
-            "🔒 מאגר מילים ואתרים חסומים (${cachedKeywords.size} פריטים) – לחץ לפתיחה ועריכה"
-    }
-
-    private fun showManageKeywordsDialog() {
-        val listLayout = LinearLayout(this).apply {
+    private fun showManageDomainsDialog() {
+        val scroll = ScrollView(this)
+        val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 16, 24, 16)
+            setPadding(36, 24, 36, 24)
         }
+        scroll.addView(container)
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("מאגר מילים ואתרים חסומים (${cachedKeywords.size})")
-            .setNegativeButton("סגור", null)
-            .create()
-
-        if (cachedKeywords.isEmpty()) {
+        if (cachedDomains.isEmpty()) {
             val emptyTv = TextView(this).apply {
-                text = "אין פריטים במאגר."
+                text = "אין אתרים מותאמים ברשימה עדיין."
                 textSize = 14f
                 setTextColor(0xFF546E7A.toInt())
-                setPadding(12, 16, 12, 16)
             }
-            listLayout.addView(emptyTv)
+            container.addView(emptyTv)
         } else {
-            for (item in cachedKeywords) {
-                val row = TextView(this).apply {
-                    val badge = if (item.isDomain) "[דומיין]" else "[מילה]"
-                    text = "✕  $badge ${item.keyword}"
+            val locked = prefs.isLockdownEnabled
+            for (item in cachedDomains) {
+                val tv = TextView(this).apply {
+                    text = if (locked) "🌐 ${item.keyword}" else "🌐 ${item.keyword}   (לחץ להסרה)"
                     textSize = 14f
-                    setTextColor(0xFF1E293B.toInt())
-                    setPadding(12, 14, 12, 14)
-                    setOnClickListener { clickedView ->
+                    setPadding(12, 16, 12, 16)
+                    setTextColor(0xFF263238.toInt())
+                    setOnClickListener {
+                        if (prefs.isLockdownEnabled) {
+                            Toast.makeText(this@MainActivity, "לא ניתן להסיר אתר במצב נעילה קבועה", Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
                         lifecycleScope.launch {
                             db.blockedKeywordsDao().deleteById(item.id)
-                            listLayout.removeView(clickedView)
-                            dialog.setTitle("מאגר מילים ואתרים חסומים (${listLayout.childCount})")
-                            Toast.makeText(this@MainActivity, "הוסר מהמאגר", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity, "האתר הוסר מהרשימה", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
-                listLayout.addView(row)
+                container.addView(tv)
             }
         }
 
-        val scrollView = ScrollView(this).apply {
-            addView(listLayout)
+        AlertDialog.Builder(this)
+            .setTitle("רשימת אתרים חסומים (${cachedDomains.size})")
+            .setView(scroll)
+            .setPositiveButton("סגור", null)
+            .show()
+    }
+
+    /**
+     * Friendly Installed-Apps Picker:
+     * Shows real app names (Hebrew/English) instead of forcing users to type technical package names!
+     */
+    private fun showInstalledAppsPickerDialog() {
+        lifecycleScope.launch {
+            val installedApps = withContext(Dispatchers.IO) {
+                val pm = packageManager
+                val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+                val resolveInfos = pm.queryIntentActivities(launcherIntent, 0)
+                val seenPackages = mutableSetOf<String>()
+                val result = mutableListOf<Pair<String, String>>() // (AppName, PackageName)
+                for (info in resolveInfos) {
+                    val pkg = info.activityInfo?.packageName ?: continue
+                    if (pkg == packageName || seenPackages.contains(pkg)) continue
+                    seenPackages.add(pkg)
+                    val label = info.loadLabel(pm)?.toString()?.trim().orEmpty().ifBlank { pkg }
+                    result.add(label to pkg)
+                }
+                result.sortBy { it.first.lowercase() }
+                result
+            }
+
+            if (installedApps.isEmpty()) {
+                Toast.makeText(this@MainActivity, "לא נמצאו אפליקציות לבחירה", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            val blockedSet = cachedBlockedApps.map { it.packageName }.toSet()
+            val names = installedApps.map { it.first }.toTypedArray()
+            val checkedItems = installedApps.map { blockedSet.contains(it.second) }.toBooleanArray()
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("בחר אפליקציות לחסימה")
+                .setMultiChoiceItems(names, checkedItems) { _, which, isChecked ->
+                    checkedItems[which] = isChecked
+                }
+                .setPositiveButton("שמור") { _, _ ->
+                    if (prefs.isLockdownEnabled) {
+                        Toast.makeText(this@MainActivity, "לא ניתן לשנות אפליקציות חסומות במצב נעילה קבועה", Toast.LENGTH_SHORT).show()
+                        return@setPositiveButton
+                    }
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        for (i in installedApps.indices) {
+                            val (label, pkg) = installedApps[i]
+                            if (checkedItems[i] && !blockedSet.contains(pkg)) {
+                                db.blockedAppsDao().insert(BlockedAppEntity(packageName = pkg, appLabel = label))
+                            } else if (!checkedItems[i] && blockedSet.contains(pkg)) {
+                                db.blockedAppsDao().deleteByPackage(pkg)
+                            }
+                        }
+                    }
+                    Toast.makeText(this@MainActivity, "רשימת האפליקציות החסומות עודכנה ✅", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("ביטול", null)
+                .show()
         }
-        dialog.setView(scrollView)
-        dialog.show()
     }
 
     private fun renderBlockedAppsList(apps: List<BlockedAppEntity>) {
         binding.containerBlockedApps.removeAllViews()
+        if (apps.isEmpty()) {
+            val tv = TextView(this).apply {
+                text = "אין אפליקציות חסומות כרגע."
+                textSize = 13f
+                setTextColor(0xFF78909C.toInt())
+            }
+            binding.containerBlockedApps.addView(tv)
+            return
+        }
+
+        val locked = prefs.isLockdownEnabled
         for (app in apps) {
             val tv = TextView(this).apply {
-                text = "✕  [אפליקציה חסומה] ${app.packageName}"
-                textSize = 13f
-                setTextColor(0xFFB71C1C.toInt())
-                setPadding(16, 8, 16, 8)
+                text = if (locked) "🚫 ${app.appLabel}" else "🚫 ${app.appLabel}  (לחץ להסרה)"
+                textSize = 14f
+                setPadding(12, 12, 12, 12)
+                setTextColor(0xFFC62828.toInt())
                 setOnClickListener {
+                    if (prefs.isLockdownEnabled) {
+                        Toast.makeText(this@MainActivity, "לא ניתן להסיר אפליקציה במצב נעילה קבועה", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
                     lifecycleScope.launch {
                         db.blockedAppsDao().deleteByPackage(app.packageName)
                     }
@@ -588,7 +470,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupCard3BlockLogs() {
+    private fun setupCard3LogsAndLockdown() {
         binding.btnToggleLogs.setOnClickListener {
             isLogsExpanded = !isLogsExpanded
             binding.containerBlockLogs.visibility = if (isLogsExpanded) View.VISIBLE else View.GONE
@@ -604,8 +486,8 @@ class MainActivity : AppCompatActivity() {
         binding.btnShareLastBlockFromDashboard.setOnClickListener {
             BlockDiagnosticReporter.shareLastBlockReport(
                 context = this,
-                targetUrlOrApp = "חסימה אחרונה מלוח הבקרה",
-                blockReason = "דו\"ח אבחון אחרון",
+                targetUrlOrApp = "דיווח מלוח הבקרה",
+                blockReason = "דיווח על חסימה שגויה",
                 pageTitle = "",
                 textSnippet = ""
             )
@@ -616,11 +498,19 @@ class MainActivity : AppCompatActivity() {
                 renderBlockLogs(logs)
             }
         }
+
+        binding.btnToggleLockdown.setOnClickListener {
+            if (!prefs.isLockdownEnabled) {
+                showEnableLockdownConfirmationDialog()
+            } else {
+                handleDisableLockdownFlow()
+            }
+        }
     }
 
     private fun updateLogsToggleLabel() {
         binding.btnToggleLogs.text = if (isLogsExpanded) {
-            "🙈 הסתר יומן חסימות אחרונות ($cachedLogsCount אירועים)"
+            "🙈 הסתר יומן חסימות ($cachedLogsCount אירועים)"
         } else {
             "📋 הצג יומן חסימות אחרונות ($cachedLogsCount אירועים)"
         }
@@ -643,7 +533,7 @@ class MainActivity : AppCompatActivity() {
         for (log in logs) {
             val timeStr = timeFormatter.format(Date(log.timestamp))
             val row = TextView(this).apply {
-                text = "[$timeStr] (${log.inferenceTimeMs}ms)\nמקור: ${log.targetAppOrUrl}\nסיבה: ${log.triggerReason}"
+                text = "[$timeStr]\nמקור: ${log.targetAppOrUrl}\nסיבה: ${log.triggerReason}"
                 textSize = 13f
                 setTextColor(0xFF263238.toInt())
                 setPadding(12, 12, 12, 12)
@@ -660,30 +550,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupCard4LockdownControl() {
-        binding.btnToggleLockdown.setOnClickListener {
-            if (!prefs.isLockdownEnabled) {
-                showEnableLockdownConfirmationDialog()
-            } else {
-                handleDisableLockdownFlow()
-            }
-        }
-    }
-
     private fun showEnableLockdownConfirmationDialog() {
         AlertDialog.Builder(this)
-            .setTitle("אזהרה: הפעלת מצב נעילה מלא (Production Mode)")
+            .setTitle("הפעלת מצב נעילה קבועה")
             .setMessage(
-                "במצב בדיקות (Sandbox) הנוכחי, האפליקציה אינה נועלת את המכשיר וניתנת להסרה בכל רגע.\n\n" +
-                    "האם סיימת את שלב הבדיקות וברצונך להפעיל את מצב הנעילה המלא?\n" +
+                "במצב הניסיון הנוכחי ניתן לשנות הגדרות או להסיר את האפליקציה בחופשיות.\n\n" +
+                    "האם ברצונך להפעיל כעת את מצב הנעילה הקבועה?\n" +
                     "(שחרור הנעילה ידרוש המתנה של 45 דקות והקלדה ידנית של פרק מ\"א בתניא)."
             )
-            .setPositiveButton("כן, הפעל מצב נעילה מלא") { _, _ ->
+            .setPositiveButton("כן, הפעל נעילה קבועה") { _, _ ->
                 lockdownManager.enableProductionLockdown()
-                refreshServiceAndLockdownStatus()
-                Toast.makeText(this, "מצב נעילה מלא הופעל", Toast.LENGTH_LONG).show()
+                refreshStatusUi()
+                Toast.makeText(this, "מצב נעילה קבועה הופעל 🔒", Toast.LENGTH_LONG).show()
             }
-            .setNegativeButton("ביטול (הישאר במצב בדיקות)", null)
+            .setNegativeButton("ביטול", null)
             .show()
     }
 
@@ -691,11 +571,11 @@ class MainActivity : AppCompatActivity() {
         val remainingMs = lockdownManager.getRemainingCooldownMs()
         if (remainingMs == -1L) {
             AlertDialog.Builder(this)
-                .setTitle("בקשה לכיבוי מצב נעילה")
-                .setMessage("כדי לכבות את מצב הנעילה המלא, יש להפעיל תחילה טיימר המתנה של 45 דקות (מוגן מפני שינוי שעון).")
+                .setTitle("בקשה לשחרור נעילה")
+                .setMessage("כדי לשחרר את הנעילה הקבועה, יש להפעיל תחילה טיימר המתנה של 45 דקות.")
                 .setPositiveButton("התחל ספירה של 45 דקות") { _, _ ->
                     lockdownManager.startUnlockCooldown()
-                    refreshServiceAndLockdownStatus()
+                    refreshStatusUi()
                     Toast.makeText(this, "הספירה לאחור (45 דקות) החלה", Toast.LENGTH_SHORT).show()
                 }
                 .setNegativeButton("ביטול", null)
@@ -707,7 +587,7 @@ class MainActivity : AppCompatActivity() {
             val minutesLeft = (remainingMs / 60000L) + 1
             AlertDialog.Builder(this)
                 .setTitle("זמן המתנה פעיל")
-                .setMessage("נותרו עוד $minutesLeft דקות לסיום זמן ההמתנה לפני שניתן להקליד את אתגר התניא.")
+                .setMessage("נותרו עוד $minutesLeft דקות לסיום זמן ההמתנה לפני הקלדת אתגר התניא.")
                 .setPositiveButton("הבנתי", null)
                 .show()
             return
@@ -740,10 +620,10 @@ class MainActivity : AppCompatActivity() {
                 val typed = inputEditText.text?.toString().orEmpty()
                 if (lockdownManager.verifyTanyaChallenge(typed)) {
                     lockdownManager.disableProductionLockdown()
-                    refreshServiceAndLockdownStatus()
-                    Toast.makeText(this, "מצב הנעילה כובה. חזרת למצב בדיקות רגיל.", Toast.LENGTH_LONG).show()
+                    refreshStatusUi()
+                    Toast.makeText(this, "מצב הנעילה כובה. חזרת למצב ניסיון.", Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "הטקסט שהוקלד אינו תואם במדויק. נסה שנית.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "הטקסט אינו תואם. נסה שוב במדויק.", Toast.LENGTH_LONG).show()
                 }
             }
             .setNegativeButton("ביטול", null)
@@ -760,79 +640,70 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun refreshServiceAndLockdownStatus() {
+    private fun refreshStatusUi() {
         val isServiceEnabled = isAccessibilityServiceEnabled()
 
-        if (isWizardActive && (currentWizardStep == 1 || currentWizardStep == 2) && isServiceEnabled && !wasServiceEnabledLastCheck) {
-            if (prefs.isSetupWizardCompleted) {
+        if (isWizardActive && currentWizardStep == 1 && isServiceEnabled && !wasServiceEnabledLastCheck) {
+            if (prefs.isSetupWizardCompleted && getConfiguredPrivateDnsHost() != null) {
                 isWizardActive = false
-                Toast.makeText(this, "שירות הנגישות הופעל מחדש! ההגדרות הקודמות שלך נשמרו ✅", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "שירות ההגנה הופעל מחדש! ההגדרות שלך שמורות ✅", Toast.LENGTH_LONG).show()
             } else {
-                currentWizardStep = 3
-                Toast.makeText(this, "מעולה! שירות הנגישות של מגן הקודש הופעל ✅", Toast.LENGTH_LONG).show()
+                currentWizardStep = 2
+                Toast.makeText(this, "מעולה! שירות ההגנה הופעל ✅", Toast.LENGTH_LONG).show()
             }
             renderWizardVisibilityAndStep()
         }
         wasServiceEnabledLastCheck = isServiceEnabled
 
         if (isServiceEnabled) {
-            binding.tvAccessibilityStatus.text = "שירות נגישות (Kodeshield – מגן הקודש): פעיל ✅"
+            binding.tvAccessibilityStatus.text = "שירות ההגנה (מגן הקודש): פעיל ✅"
             binding.tvAccessibilityStatus.setTextColor(0xFF2E7D32.toInt())
             binding.btnOpenAccessibility.visibility = View.GONE
-            binding.tvWizardStep2Status.text = "סטטוס נוכחי: שירות הנגישות פעיל ✅"
-            binding.tvWizardStep2Status.setTextColor(0xFF2E7D32.toInt())
-            binding.tvWizardStep2Status.setBackgroundColor(0xFFE8F5E9.toInt())
+            binding.tvWizardStep1Status.text = "סטטוס נוכחי: שירות ההגנה פעיל ✅"
+            binding.tvWizardStep1Status.setTextColor(0xFF2E7D32.toInt())
+            binding.tvWizardStep1Status.setBackgroundColor(0xFFE8F5E9.toInt())
         } else {
-            binding.tvAccessibilityStatus.text = "שירות נגישות (Kodeshield – מגן הקודש): כבוי ⚠️"
+            binding.tvAccessibilityStatus.text = "שירות ההגנה (מגן הקודש): כבוי ⚠️"
             binding.tvAccessibilityStatus.setTextColor(0xFFC62828.toInt())
             binding.btnOpenAccessibility.visibility = View.VISIBLE
-            binding.tvWizardStep2Status.text = "סטטוס נוכחי: שירות הנגישות כבוי ⏳"
-            binding.tvWizardStep2Status.setTextColor(0xFFC62828.toInt())
-            binding.tvWizardStep2Status.setBackgroundColor(0xFFFFEBEE.toInt())
+            binding.tvWizardStep1Status.text = "סטטוס נוכחי: שירות ההגנה כבוי ⏳"
+            binding.tvWizardStep1Status.setTextColor(0xFFC62828.toInt())
+            binding.tvWizardStep1Status.setBackgroundColor(0xFFFFEBEE.toInt())
         }
 
         val dnsHost = getConfiguredPrivateDnsHost()
         if (dnsHost != null) {
-            binding.tvPrivateDnsStatus.text = "DNS פרטי פעיל: $dnsHost (0% סוללה) ✅"
+            binding.tvPrivateDnsStatus.text = "סינון רשת נקי (DNS פרטי): פעיל ($dnsHost) ✅"
             binding.tvPrivateDnsStatus.setTextColor(0xFF2E7D32.toInt())
-            binding.tvWizardStep3Status.text = "סטטוס DNS פרטי: מוגדר ($dnsHost) ✅"
-            binding.tvWizardStep3Status.setTextColor(0xFF2E7D32.toInt())
+            binding.tvWizardStep2Status.text = "סטטוס DNS פרטי: מוגדר ($dnsHost) ✅"
+            binding.tvWizardStep2Status.setTextColor(0xFF2E7D32.toInt())
+            binding.tvWizardStep2Status.setBackgroundColor(0xFFE8F5E9.toInt())
         } else {
-            binding.tvPrivateDnsStatus.text = "DNS פרטי: לא מוגדר ⚠️ (לחץ להעתקת Cloudflare / AdGuard)"
+            binding.tvPrivateDnsStatus.text = "סינון רשת נקי (DNS פרטי): לא מוגדר ⚠️"
             binding.tvPrivateDnsStatus.setTextColor(0xFFC62828.toInt())
-            binding.tvWizardStep3Status.text = "סטטוס DNS: לחץ להעתקת כתובת Cloudflare Family ⏳"
-            binding.tvWizardStep3Status.setTextColor(0xFF546E7A.toInt())
+            binding.tvWizardStep2Status.text = "סטטוס DNS פרטי: ממתין להגדרה ⏳"
+            binding.tvWizardStep2Status.setTextColor(0xFF546E7A.toInt())
+            binding.tvWizardStep2Status.setBackgroundColor(0xFFF5F7FA.toInt())
         }
+
         binding.switchLockPrivateDns.isChecked = prefs.lockPrivateDnsSettings
         binding.switchLockPrivateDns.isEnabled = !prefs.isLockdownEnabled
 
-        binding.tvModelStatus.text =
-            "מצב Lite (0% סוללה): סריקת תמונות/AI כבויה – סינון DNS + אתרי פורנו + SafeSearch בלבד 🔋✅"
-
         if (!prefs.isLockdownEnabled) {
             binding.switchPauseFilterTesting.visibility = View.VISIBLE
-            binding.rbProfileStrict.isEnabled = true
-            binding.rbProfileModerateShopping.isEnabled = true
-            binding.rbProfileCustom.isEnabled = true
-            binding.tvModeBanner.text =
-                "מצב פעולה: בדיקות ארגז חול (Sandbox Mode – ניתן להסרה בכל עת)"
-            binding.tvLockdownStatus.text =
-                "כבוי כברירת מחדל (מצב בדיקות בטוח – ללא חסימת ADB וללא מניעת הסרה)"
-            binding.btnToggleLockdown.text = "הפעל מצב נעילה מלא (לאחר סיום הבדיקות)"
+            binding.tvModeBanner.text = "מצב פעולה: מצב ניסיון (ניתן לעריכה והסרה בחופשיות)"
+            binding.tvLockdownStatus.text = "כבוי כעת (מצב ניסיון – ניתן לשנות הגדרות או להסיר בחופשיות)"
+            binding.btnToggleLockdown.text = "🔒 הפעל מצב נעילה קבועה"
         } else {
             binding.switchPauseFilterTesting.visibility = View.GONE
-            binding.rbProfileStrict.isEnabled = false
-            binding.rbProfileModerateShopping.isEnabled = false
-            binding.rbProfileCustom.isEnabled = false
-            binding.tvModeBanner.text =
-                "מצב פעולה: נעילה מלאה פעילה (Production Lockdown)"
+            binding.tvModeBanner.text = "מצב פעולה: נעילה קבועה פעילה 🔒"
             val rem = lockdownManager.getRemainingCooldownMs()
             val remText = when {
                 rem > 0L -> " (ספירה לאחור לשחרור: ${(rem / 60000L) + 1} דק')"
                 rem == 0L -> " (זמן ההמתנה הסתיים – לחץ להקלדת אתגר התניא)"
                 else -> ""
             }
-            binding.tvLockdownStatus.text = "מצב נעילה מלא פעיל 🔒$remText"
+            binding.tvLockdownStatus.text = "מצב נעילה קבועה פעיל 🔒$remText"
             binding.btnToggleLockdown.text = "בקש שחרור נעילה (45 דק' + אתגר תניא)"
         }
     }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.pureguard.filter"
         minSdk = 29
         targetSdk = 34
-        versionCode = 13
-        versionName = "5.0.0-Kodeshield-Lite"
+        versionCode = 14
+        versionName = "5.1.0-Kodeshield"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -58,10 +58,6 @@ android {
     buildFeatures {
         viewBinding = true
     }
-
-    androidResources {
-        noCompress += "tflite"
-    }
 }
 
 dependencies {
@@ -81,14 +77,6 @@ dependencies {
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
 
-    // TensorFlow Lite for Local NSFW Detection
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
-
-    // Google ML Kit On-Device OCR + Object Detection (detectAndCropObjects like NetSpark!)
-    implementation("com.google.mlkit:text-recognition:16.0.0")
-    implementation("com.google.mlkit:object-detection:17.0.1")
-
-    // OkHttp for Layer 3 Free AI Re-Check
+    // OkHttp for OTA Updates & Diagnostic Reporting
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

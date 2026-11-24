@@ -309,7 +309,7 @@ class FilterAccessibilityService : AccessibilityService() {
             if (matchedDomainOrExplicit != null) {
                 triggerBlockOverlay(
                     targetAppOrUrl = detectedUrl,
-                    reason = "נחסם עקב אתר/כתובת פורנוגרפית: $matchedDomainOrExplicit",
+                    reason = "הגישה לאתר זה נחסמה לשמירת העיניים 🛡️",
                     pageTitle = detectedUrl,
                     textSnippet = "",
                     isTextBlock = false,

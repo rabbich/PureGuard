@@ -96,7 +96,7 @@ class OtaUpdateManager(private val context: Context) {
 
                 // Extra safety: if GET headers show the exact same ETag & byte size as the already-downloaded APK, reuse it immediately!
                 if (isValidCachedApk(updateFile) &&
-                    totalBytes > 10_000_000L &&
+                    totalBytes > 1_000_000L &&
                     updateFile.length() == totalBytes &&
                     (remoteEtag.isEmpty() || remoteEtag == otaPrefs.getString(KEY_CACHED_ETAG, ""))
                 ) {
@@ -161,7 +161,7 @@ class OtaUpdateManager(private val context: Context) {
     }
 
     private fun isValidCachedApk(file: File): Boolean {
-        if (!file.exists() || file.length() < 10_000_000L) return false
+        if (!file.exists() || file.length() < 1_000_000L) return false
         return try {
             val info = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
             info != null && info.packageName == context.packageName
@@ -215,7 +215,7 @@ class OtaUpdateManager(private val context: Context) {
                 val remoteEtag = resp.header("ETag").orEmpty()
                 val remoteLen = resp.header("Content-Length")?.toLongOrNull() ?: -1L
                 val etagMatches = remoteEtag.isNotEmpty() && savedEtag.isNotEmpty() && remoteEtag == savedEtag
-                val lenMatches = remoteLen > 10_000_000L && updateFile.length() == remoteLen
+                val lenMatches = remoteLen > 1_000_000L && updateFile.length() == remoteLen
                 etagMatches || lenMatches
             }
         } catch (_: Throwable) {

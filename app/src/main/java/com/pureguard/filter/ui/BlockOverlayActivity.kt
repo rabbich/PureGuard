@@ -97,7 +97,7 @@ class BlockOverlayActivity : AppCompatActivity() {
                 }
                 Toast.makeText(
                     this@BlockOverlayActivity,
-                    "אושר חד-פעמית ל-15 דקות (מצב בדיקות)",
+                    "אושר חד-פעמית ל-15 דקות (מצב ניסיון)",
                     Toast.LENGTH_SHORT
                 ).show()
                 finish()
