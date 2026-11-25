@@ -60,8 +60,13 @@ class FilterAccessibilityService : AccessibilityService() {
     @Volatile
     private var lastBlockOverlayElapsed: Long = 0L
 
+    @Volatile
+    private var connectedAtElapsedRealtime: Long = 0L
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        isServiceRunning = true
+        connectedAtElapsedRealtime = SystemClock.elapsedRealtime()
         db = PureGuardDatabase.getInstance(applicationContext)
         prefs = PreferencesManager(applicationContext)
         powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -339,13 +344,17 @@ class FilterAccessibilityService : AccessibilityService() {
         }
 
         // 3. Accessibility Service disable attempt
-        if (screenLower.contains("השתמש ב-") ||
-            screenLower.contains("קיצור דרך") ||
-            screenLower.contains("נגישות") ||
-            screenLower.contains("accessibility") ||
-            screenLower.contains("use kodeshield") ||
-            screenLower.contains("עצור את") ||
-            screenLower.contains("stop kodeshield")
+        // Allow a 12-second grace period right after onServiceConnected() so enabling the service never kicks the user out!
+        val elapsedSinceConnect = SystemClock.elapsedRealtime() - connectedAtElapsedRealtime
+        if (elapsedSinceConnect >= 12_000L && (
+                screenLower.contains("השתמש ב-") ||
+                screenLower.contains("קיצור דרך") ||
+                screenLower.contains("נגישות") ||
+                screenLower.contains("accessibility") ||
+                screenLower.contains("use kodeshield") ||
+                screenLower.contains("עצור את") ||
+                screenLower.contains("stop kodeshield")
+            )
         ) {
             return "🔒 לא ניתן לכבות את שירות ההגנה של מגן הקודש במצב נעילה קבועה.\nלשחרור מסודר, פתח את האפליקציה ובקש שחרור נעילה (45 דק' + תניא)."
         }
@@ -594,6 +603,7 @@ class FilterAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isServiceRunning = false
         overlayManager?.dismissOverlayImmediate()
         serviceScope.cancel()
     }
@@ -601,6 +611,10 @@ class FilterAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "FilterAccessService"
         private const val URL_SCAN_THROTTLE_MS = 700L
+
+        @Volatile
+        var isServiceRunning: Boolean = false
+            private set
 
         private val SETTINGS_PACKAGES = setOf(
             "com.android.settings",

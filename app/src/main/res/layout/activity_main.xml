@@ -359,6 +359,17 @@
                         android:text="הפעל את מגן הקודש בהגדרות נגישות"
                         android:visibility="gone" />
 
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnIgnoreBatteryOpt"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="🔋 מנע כיבוי אוטומטי ברקע (מומלץ לשיאומי)"
+                        android:textColor="#E65100"
+                        android:textSize="13sp"
+                        android:visibility="gone" />
+
                     <TextView
                         android:id="@+id/tvPrivateDnsStatus"
                         android:layout_width="match_parent"

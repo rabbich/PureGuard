@@ -7,7 +7,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.ActionMode
 import android.view.Menu
@@ -201,6 +203,10 @@ class MainActivity : AppCompatActivity() {
     private fun setupCard1ProtectionAndDns() {
         binding.btnOpenAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        binding.btnIgnoreBatteryOpt.setOnClickListener {
+            requestIgnoreBatteryOptimizations()
         }
 
         binding.btnConfigureDns.setOnClickListener {
@@ -704,20 +710,45 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestIgnoreBatteryOptimizations() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            }
+        } catch (_: Throwable) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
     private fun refreshStatusUi() {
         val isServiceEnabled = isAccessibilityServiceEnabled()
 
-        if (isWizardActive && currentWizardStep == 1 && isServiceEnabled && !wasServiceEnabledLastCheck) {
+        if (isWizardActive && currentWizardStep == 1 && isServiceEnabled) {
             if (prefs.isSetupWizardCompleted && getConfiguredPrivateDnsHost() != null) {
                 isWizardActive = false
-                Toast.makeText(this, "שירות ההגנה הופעל מחדש! ההגדרות שלך שמורות ✅", Toast.LENGTH_LONG).show()
+                if (!wasServiceEnabledLastCheck) {
+                    Toast.makeText(this, "שירות ההגנה הופעל מחדש! ההגדרות שלך שמורות ✅", Toast.LENGTH_LONG).show()
+                }
             } else {
                 currentWizardStep = 2
-                Toast.makeText(this, "מעולה! שירות ההגנה הופעל ✅", Toast.LENGTH_LONG).show()
+                if (!wasServiceEnabledLastCheck) {
+                    Toast.makeText(this, "מעולה! שירות ההגנה הופעל ✅", Toast.LENGTH_LONG).show()
+                }
             }
             renderWizardVisibilityAndStep()
         }
         wasServiceEnabledLastCheck = isServiceEnabled
+
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val isIgnoringBattery = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            pm.isIgnoringBatteryOptimizations(packageName)
+        binding.btnIgnoreBatteryOpt.visibility = if (isIgnoringBattery) View.GONE else View.VISIBLE
 
         if (isServiceEnabled) {
             binding.tvAccessibilityStatus.text = "שירות ההגנה (מגן הקודש): פעיל ✅"
@@ -779,6 +810,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
+        if (FilterAccessibilityService.isServiceRunning) return true
         val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
         val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
         for (service in enabledServices) {
