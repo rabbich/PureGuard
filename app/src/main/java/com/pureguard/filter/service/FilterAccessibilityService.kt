@@ -97,31 +97,54 @@ class FilterAccessibilityService : AccessibilityService() {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
 
-        // Never inspect our own package or system UI / keyboards
-        if (pkg == packageName || isIgnoredSystemOrKeyboardPackage(pkg)) return
+        // Never inspect our own package
+        if (pkg == packageName) return
 
         // Screen off or Lock Screen: zero CPU work
         if (!powerManager.isInteractive || keyguardManager.isKeyguardLocked) return
 
-        // Quick 1-Click Sandbox Testing Pause Toggle
-        if (prefs.isFilterPausedForTesting) return
+        // 1. ANTI-TAMPER & PRIVATE DNS LOCK GUARD (Settings / Xiaomi App Info / Package Installer)
+        if (TAMPER_GUARD_PACKAGES.contains(pkg)) {
+            if (!prefs.isFilterPausedForTesting && prefs.lockPrivateDnsSettings && SETTINGS_PACKAGES.contains(pkg)) {
+                if (isAccessingPrivateDnsSettings(event)) {
+                    triggerBlockOverlay(
+                        targetAppOrUrl = "הגדרות DNS פרטי",
+                        reason = "נחסם: מסך הגדרות ה-DNS הפרטי נעול לשינוי על ידי מגן הקודש 🔒",
+                        pageTitle = "נעילת DNS פרטי",
+                        textSnippet = "",
+                        isTextBlock = false,
+                        inferenceTimeMs = 0L,
+                        navigateBack = true
+                    )
+                    return
+                }
+            }
 
-        // 1. LOCK ANDROID PRIVATE DNS SETTINGS SCREEN (blocks opening or modifying Private DNS)
-        if (prefs.lockPrivateDnsSettings && SETTINGS_PACKAGES.contains(pkg)) {
-            if (isAccessingPrivateDnsSettings(event)) {
-                triggerBlockOverlay(
-                    targetAppOrUrl = "הגדרות DNS פרטי",
-                    reason = "נחסם: מסך הגדרות ה-DNS הפרטי נעול לשינוי על ידי מגן הקודש 🔒",
-                    pageTitle = "נעילת DNS פרטי",
-                    textSnippet = "",
-                    isTextBlock = false,
-                    inferenceTimeMs = 0L,
-                    navigateBack = true
-                )
-                return
+            // Full Anti-Uninstall & Anti-Disable Guard (active ONLY when Permanent Lockdown is ON)
+            if (prefs.isLockdownEnabled) {
+                val tamperReason = detectKodeshieldTamperAttempt(event)
+                if (tamperReason != null) {
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                    triggerBlockOverlay(
+                        targetAppOrUrl = "הגנת מניעת הסרה",
+                        reason = tamperReason,
+                        pageTitle = "נעילה קבועה פעילה",
+                        textSnippet = "",
+                        isTextBlock = false,
+                        inferenceTimeMs = 0L,
+                        navigateBack = false
+                    )
+                    return
+                }
             }
             return
         }
+
+        // Ignore keyboards & background system UI overlays
+        if (isIgnoredSystemOrKeyboardPackage(pkg)) return
+
+        // Quick 1-Click Sandbox Testing Pause Toggle (always false when isLockdownEnabled == true)
+        if (prefs.isFilterPausedForTesting) return
 
         // 2. App Blocker check (user-selected blocked apps)
         if (cachedBlockedApps.contains(pkg)) {
@@ -239,6 +262,95 @@ class FilterAccessibilityService : AccessibilityService() {
         } finally {
             try { root.recycle() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * 3-Layer Anti-Tamper Guard (ONLY runs when Permanent Lockdown is enabled):
+     * Detects attempts inside Android Settings, Xiaomi Security Center (App Info), or Package Installer
+     * to disable Device Admin, turn off Accessibility, Force Stop, Clear Data, or Uninstall Kodeshield.
+     * Allows managing all OTHER apps and phone settings freely!
+     */
+    private fun detectKodeshieldTamperAttempt(event: AccessibilityEvent): String? {
+        val collected = StringBuilder()
+        event.text?.forEach { collected.append(it).append(' ') }
+        event.contentDescription?.let { collected.append(it).append(' ') }
+
+        val root = try { rootInActiveWindow } catch (_: Throwable) { null }
+        if (root != null) {
+            try {
+                var visited = 0
+                fun scanNode(node: AccessibilityNodeInfo?) {
+                    if (node == null || visited > 80) return
+                    visited++
+                    node.text?.let { if (it.isNotBlank()) collected.append(it).append(' ') }
+                    node.contentDescription?.let { if (it.isNotBlank()) collected.append(it).append(' ') }
+                    val count = node.childCount
+                    for (i in 0 until count) {
+                        if (visited > 80) break
+                        val child = node.getChild(i)
+                        if (child != null) {
+                            scanNode(child)
+                            try { child.recycle() } catch (_: Exception) {}
+                        }
+                    }
+                }
+                scanNode(root)
+            } catch (_: Throwable) {
+            } finally {
+                try { root.recycle() } catch (_: Exception) {}
+            }
+        }
+
+        val screenLower = collected.toString().lowercase()
+        val mentionsKodeshield = screenLower.contains("מגן הקודש") ||
+            screenLower.contains("kodeshield") ||
+            screenLower.contains("com.pureguard.filter")
+
+        if (!mentionsKodeshield) return null
+
+        // 1. Device Admin deactivation attempt
+        if (screenLower.contains("מנהל מכשיר") ||
+            screenLower.contains("מנהלי מכשיר") ||
+            screenLower.contains("בטל הפעלה") ||
+            screenLower.contains("השבת אפליקצ") ||
+            screenLower.contains("deactivate") ||
+            screenLower.contains("device admin")
+        ) {
+            return "🔒 לא ניתן לבטל את הרשאת מנהל המכשיר של מגן הקודש במצב נעילה קבועה.\nלשחרור מסודר, פתח את האפליקציה ובקש שחרור נעילה (45 דק' + תניא)."
+        }
+
+        // 2. App Info / Force Stop / Clear Data / Uninstall attempt
+        if (screenLower.contains("הסר התקנה") ||
+            screenLower.contains("הסרת התקנה") ||
+            screenLower.contains("עצור בכוח") ||
+            screenLower.contains("אלץ עצירה") ||
+            screenLower.contains("נקה נתונים") ||
+            screenLower.contains("מחק נתונים") ||
+            screenLower.contains("נקה הכל") ||
+            screenLower.contains("מידע על האפליקציה") ||
+            screenLower.contains("פרטי האפליקציה") ||
+            screenLower.contains("uninstall") ||
+            screenLower.contains("force stop") ||
+            screenLower.contains("clear data") ||
+            screenLower.contains("clear storage") ||
+            screenLower.contains("app info")
+        ) {
+            return "🔒 לא ניתן להסיר, לעצור או לאפס את מגן הקודש במצב נעילה קבועה.\nלשחרור מסודר, פתח את האפליקציה ובקש שחרור נעילה (45 דק' + תניא)."
+        }
+
+        // 3. Accessibility Service disable attempt
+        if (screenLower.contains("השתמש ב-") ||
+            screenLower.contains("קיצור דרך") ||
+            screenLower.contains("נגישות") ||
+            screenLower.contains("accessibility") ||
+            screenLower.contains("use kodeshield") ||
+            screenLower.contains("עצור את") ||
+            screenLower.contains("stop kodeshield")
+        ) {
+            return "🔒 לא ניתן לכבות את שירות ההגנה של מגן הקודש במצב נעילה קבועה.\nלשחרור מסודר, פתח את האפליקציה ובקש שחרור נעילה (45 דק' + תניא)."
+        }
+
+        return null
     }
 
     /**
@@ -493,6 +605,14 @@ class FilterAccessibilityService : AccessibilityService() {
         private val SETTINGS_PACKAGES = setOf(
             "com.android.settings",
             "com.miui.settings"
+        )
+
+        private val TAMPER_GUARD_PACKAGES = setOf(
+            "com.android.settings",
+            "com.miui.settings",
+            "com.miui.securitycenter",
+            "com.google.android.packageinstaller",
+            "com.android.packageinstaller"
         )
 
         private val EXPLICIT_PORN_URL_TOKENS = listOf(

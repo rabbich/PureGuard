@@ -1,6 +1,7 @@
 package com.pureguard.filter.ui
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.admin.DevicePolicyManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -18,6 +19,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -55,6 +57,26 @@ class MainActivity : AppCompatActivity() {
     private var cachedBlockedApps: List<BlockedAppEntity> = emptyList()
     private var cachedLogsCount: Int = 0
     private var isLogsExpanded = false
+
+    private val deviceAdminLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (lockdownManager.isAdminActive()) {
+            lockdownManager.enableProductionLockdown()
+            refreshStatusUi()
+            Toast.makeText(
+                this,
+                "🔒 נעילה קבועה + הגנת מניעת הסרה הופעלו בהצלחה!",
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            Toast.makeText(
+                this,
+                "יש לאשר 'הפעל אפליקציית מנהל מכשיר' כדי למנוע הסרה מהמסך הראשי",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -551,17 +573,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showEnableLockdownConfirmationDialog() {
+        if (!isAccessibilityServiceEnabled()) {
+            Toast.makeText(this, "יש להפעיל תחילה את שירות ההגנה בנגישות", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val adminNote = if (lockdownManager.isAdminActive()) {
+            "הרשאת מנהל מכשיר כבר פעילה ✅\n\n"
+        } else {
+            "בלחיצה על אישור יפתח מסך לאישור 'מנהל מכשיר' – זה מה שמונע מחיקה של האפליקציה מהמסך הראשי.\n\n"
+        }
+
         AlertDialog.Builder(this)
-            .setTitle("הפעלת מצב נעילה קבועה")
+            .setTitle("הפעלת מצב נעילה קבועה ומניעת הסרה")
             .setMessage(
-                "במצב הניסיון הנוכחי ניתן לשנות הגדרות או להסיר את האפליקציה בחופשיות.\n\n" +
-                    "האם ברצונך להפעיל כעת את מצב הנעילה הקבועה?\n" +
-                    "(שחרור הנעילה ידרוש המתנה של 45 דקות והקלדה ידנית של פרק מ\"א בתניא)."
+                adminNote +
+                    "במצב נעילה קבועה:\n" +
+                    "• לא ניתן להסיר את האפליקציה מהמסך הראשי\n" +
+                    "• מסכי העקיפה (DNS פרטי, מנהל מכשיר, נגישות, פרטי אפליקציה) נעולים\n" +
+                    "• שחרור הנעילה ידרוש המתנה של 45 דקות והקלדה ידנית של פרק מ\"א בתניא."
             )
             .setPositiveButton("כן, הפעל נעילה קבועה") { _, _ ->
-                lockdownManager.enableProductionLockdown()
-                refreshStatusUi()
-                Toast.makeText(this, "מצב נעילה קבועה הופעל 🔒", Toast.LENGTH_LONG).show()
+                if (!lockdownManager.isAdminActive()) {
+                    val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                        putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, lockdownManager.getAdminComponent())
+                        putExtra(
+                            DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                            "הרשאת מנהל מכשיר מונעת מחיקה והסרה של מגן הקודש מהמסך הראשי."
+                        )
+                    }
+                    deviceAdminLauncher.launch(intent)
+                } else {
+                    lockdownManager.enableProductionLockdown()
+                    refreshStatusUi()
+                    Toast.makeText(this, "🔒 מצב נעילה קבועה הופעל!", Toast.LENGTH_LONG).show()
+                }
             }
             .setNegativeButton("ביטול", null)
             .show()
@@ -703,7 +749,12 @@ class MainActivity : AppCompatActivity() {
                 rem == 0L -> " (זמן ההמתנה הסתיים – לחץ להקלדת אתגר התניא)"
                 else -> ""
             }
-            binding.tvLockdownStatus.text = "מצב נעילה קבועה פעיל 🔒$remText"
+            val adminStatusText = when {
+                lockdownManager.isDeviceOwner() -> " | בעלות מלאה פעילה"
+                lockdownManager.isAdminActive() -> " | מניעת הסרה פעילה 🛡️"
+                else -> ""
+            }
+            binding.tvLockdownStatus.text = "מצב נעילה קבועה פעיל 🔒$adminStatusText$remText"
             binding.btnToggleLockdown.text = "בקש שחרור נעילה (45 דק' + אתגר תניא)"
         }
     }

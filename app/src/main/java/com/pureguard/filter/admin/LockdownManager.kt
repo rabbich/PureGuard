@@ -40,6 +40,8 @@ class LockdownManager(private val context: Context) {
     fun enableProductionLockdown(): Result<Unit> {
         return try {
             prefs.isLockdownEnabled = true
+            prefs.lockPrivateDnsSettings = true
+            prefs.isFilterPausedForTesting = false
             prefs.unlockRequestElapsedRealtime = 0L
 
             if (isDeviceOwner()) {
@@ -97,6 +99,7 @@ class LockdownManager(private val context: Context) {
     fun disableProductionLockdown(): Result<Unit> {
         return try {
             prefs.isLockdownEnabled = false
+            prefs.lockPrivateDnsSettings = false
             prefs.unlockRequestElapsedRealtime = 0L
 
             if (isDeviceOwner()) {
@@ -108,6 +111,11 @@ class LockdownManager(private val context: Context) {
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_VPN)
                 dpm.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_PRIVATE_DNS)
                 applyChromeManagedRestrictions(enable = false)
+            } else if (isAdminActive()) {
+                try {
+                    dpm.removeActiveAdmin(adminComponent)
+                } catch (_: Throwable) {
+                }
             }
             Result.success(Unit)
         } catch (e: Exception) {
