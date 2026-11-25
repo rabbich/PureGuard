@@ -614,62 +614,80 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleDisableLockdownFlow() {
-        val remainingMs = lockdownManager.getRemainingCooldownMs()
-        if (remainingMs == -1L) {
-            AlertDialog.Builder(this)
-                .setTitle("בקשה לשחרור נעילה")
-                .setMessage("כדי לשחרר את הנעילה הקבועה, יש להפעיל תחילה טיימר המתנה של 45 דקות.")
-                .setPositiveButton("התחל ספירה של 45 דקות") { _, _ ->
-                    lockdownManager.startUnlockCooldown()
-                    refreshStatusUi()
-                    Toast.makeText(this, "הספירה לאחור (45 דקות) החלה", Toast.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("ביטול", null)
-                .show()
-            return
-        }
+        when (val state = lockdownManager.getUnlockWindowState()) {
+            is LockdownManager.UnlockWindowState.NotStartedOrExpired -> {
+                AlertDialog.Builder(this)
+                    .setTitle("בקשה לשחרור נעילה")
+                    .setMessage(
+                        "כדי לשחרר את הנעילה הקבועה:\n" +
+                            "1. יש להמתין 45 דקות.\n" +
+                            "2. בתום 45 דקות ייפתח חלון זמן של 15 דקות להקלדת תחילת פרק מ\"א בתניא.\n" +
+                            "3. אם לא תקליד בתוך 15 הדקות – החלון ייסגר ויידרש להמתין 45 דקות מחדש."
+                    )
+                    .setPositiveButton("התחל ספירה של 45 דקות") { _, _ ->
+                        lockdownManager.startUnlockCooldown()
+                        refreshStatusUi()
+                        Toast.makeText(this, "הספירה לאחור (45 דקות) החלה ⏳", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("ביטול", null)
+                    .show()
+            }
 
-        if (remainingMs > 0L) {
-            val minutesLeft = (remainingMs / 60000L) + 1
-            AlertDialog.Builder(this)
-                .setTitle("זמן המתנה פעיל")
-                .setMessage("נותרו עוד $minutesLeft דקות לסיום זמן ההמתנה לפני הקלדת אתגר התניא.")
-                .setPositiveButton("הבנתי", null)
-                .show()
-            return
-        }
+            is LockdownManager.UnlockWindowState.Waiting -> {
+                val minutesLeft = (state.remainingWaitMs / 60000L) + 1
+                AlertDialog.Builder(this)
+                    .setTitle("זמן המתנה פעיל ⏳")
+                    .setMessage("נותרו עוד $minutesLeft דקות לסיום ההמתנה לפני שייפתח חלון 15 הדקות להקלדת פרק מ\"א בתניא.")
+                    .setPositiveButton("הבנתי", null)
+                    .show()
+            }
 
-        showTanyaTypingChallengeDialog()
+            is LockdownManager.UnlockWindowState.WindowOpen -> {
+                showTanyaTypingChallengeDialog(state.remainingWindowMs)
+            }
+        }
     }
 
-    private fun showTanyaTypingChallengeDialog() {
-        val inputEditText = EditText(this).apply {
-            hint = "הקלד כאן ידנית (ללא העתק-הדבק)..."
-            isLongClickable = false
-            setTextIsSelectable(false)
-            customSelectionActionModeCallback = object : ActionMode.Callback {
-                override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
-                override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
-                override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
-                override fun onDestroyActionMode(mode: ActionMode?) {}
-            }
+    private fun showTanyaTypingChallengeDialog(remainingWindowMs: Long) {
+        // Clear system clipboard when dialog opens as an extra anti-paste layer
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+        } catch (_: Throwable) {
+        }
+
+        val windowMinutesLeft = ((remainingWindowMs / 60000L) + 1).coerceIn(1, 15)
+        val inputEditText = NoPasteEditText(this).apply {
+            hint = "הקלד כאן ידנית (אות-אות, הדבקה חסומה)..."
+            minLines = 5
+            maxLines = 9
+            setPadding(24, 20, 24, 20)
+        }
+
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(36, 12, 36, 8)
+            addView(inputEditText)
         }
 
         AlertDialog.Builder(this)
-            .setTitle("אתגר שחרור נעילה – תניא פרק מ\"א")
+            .setTitle("שחרור נעילה – תניא פרק מ\"א")
             .setMessage(
-                "הקלד ידנית (ללא העתק-הדבק) את הקטע הבא:\n\n" +
-                    LockdownManager.TANYA_CHAPTER_41_CHALLENGE
+                "חלון השחרור פתוח לעוד $windowMinutesLeft דקות (לאחר מכן ייסגר ל-45 דקות מחדש).\n\n" +
+                    "הקלד ידנית מהספר את תחילת פרק מ\"א בתניא – מהמילה \"ברם\" ועד המילה \"המלך\" (בדיוק כמו בספר כולל ראשי תיבות, ללא פסיקים ונקודות):"
             )
-            .setView(inputEditText)
+            .setView(wrapper)
             .setPositiveButton("אמת ושחרר נעילה") { _, _ ->
                 val typed = inputEditText.text?.toString().orEmpty()
-                if (lockdownManager.verifyTanyaChallenge(typed)) {
+                if (lockdownManager.getUnlockWindowState() !is LockdownManager.UnlockWindowState.WindowOpen) {
+                    refreshStatusUi()
+                    Toast.makeText(this, "חלון 15 הדקות הסתיים. יש להפעיל המתנה של 45 דקות מחדש.", Toast.LENGTH_LONG).show()
+                } else if (lockdownManager.verifyTanyaChallenge(typed)) {
                     lockdownManager.disableProductionLockdown()
                     refreshStatusUi()
                     Toast.makeText(this, "מצב הנעילה כובה. חזרת למצב ניסיון.", Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "הטקסט אינו תואם. נסה שוב במדויק.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "הטקסט אינו תואם במדויק לספר (בדוק כתיב חסר וראשי תיבות) ונסה שוב.", Toast.LENGTH_LONG).show()
                 }
             }
             .setNegativeButton("ביטול", null)
@@ -743,11 +761,12 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.switchPauseFilterTesting.visibility = View.GONE
             binding.tvModeBanner.text = "מצב פעולה: נעילה קבועה פעילה 🔒"
-            val rem = lockdownManager.getRemainingCooldownMs()
-            val remText = when {
-                rem > 0L -> " (ספירה לאחור לשחרור: ${(rem / 60000L) + 1} דק')"
-                rem == 0L -> " (זמן ההמתנה הסתיים – לחץ להקלדת אתגר התניא)"
-                else -> ""
+            val remText = when (val state = lockdownManager.getUnlockWindowState()) {
+                is LockdownManager.UnlockWindowState.Waiting ->
+                    " (ספירה לאחור: ${(state.remainingWaitMs / 60000L) + 1} דק')"
+                is LockdownManager.UnlockWindowState.WindowOpen ->
+                    " (חלון שחרור פתוח לעוד ${((state.remainingWindowMs / 60000L) + 1).coerceIn(1, 15)} דק' – לחץ להקלדה)"
+                is LockdownManager.UnlockWindowState.NotStartedOrExpired -> ""
             }
             val adminStatusText = when {
                 lockdownManager.isDeviceOwner() -> " | בעלות מלאה פעילה"

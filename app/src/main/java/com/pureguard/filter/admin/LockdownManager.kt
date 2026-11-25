@@ -69,25 +69,44 @@ class LockdownManager(private val context: Context) {
         prefs.unlockRequestElapsedRealtime = SystemClock.elapsedRealtime()
     }
 
+    sealed class UnlockWindowState {
+        object NotStartedOrExpired : UnlockWindowState()
+        data class Waiting(val remainingWaitMs: Long) : UnlockWindowState()
+        data class WindowOpen(val remainingWindowMs: Long) : UnlockWindowState()
+    }
+
     /**
-     * Returns remaining cooldown time in milliseconds, or 0L if cooldown has finished.
-     * Returns -1L if cooldown has not been started or device was rebooted.
+     * Evaluates the 45-minute wait + 15-minute open unlock window.
+     * If more than 60 minutes (45m wait + 15m window) have elapsed without completing the challenge,
+     * the request automatically expires and resets to NotStartedOrExpired!
      */
-    fun getRemainingCooldownMs(): Long {
+    fun getUnlockWindowState(): UnlockWindowState {
         val startedAt = prefs.unlockRequestElapsedRealtime
         val now = SystemClock.elapsedRealtime()
         if (startedAt <= 0L || now < startedAt) {
-            return -1L
+            return UnlockWindowState.NotStartedOrExpired
         }
         val elapsed = now - startedAt
-        val remaining = COOLDOWN_DURATION_MS - elapsed
-        return if (remaining > 0L) remaining else 0L
+        if (elapsed < COOLDOWN_DURATION_MS) {
+            return UnlockWindowState.Waiting(COOLDOWN_DURATION_MS - elapsed)
+        }
+        val totalAllowedMs = COOLDOWN_DURATION_MS + UNLOCK_WINDOW_DURATION_MS
+        if (elapsed <= totalAllowedMs) {
+            return UnlockWindowState.WindowOpen(totalAllowedMs - elapsed)
+        }
+        // 15-minute window expired -> reset automatically so user must wait 45 minutes again
+        prefs.unlockRequestElapsedRealtime = 0L
+        return UnlockWindowState.NotStartedOrExpired
     }
 
     /**
      * Verifies if the user typed the exact Tanya Chapter 41 challenge passage.
+     * Also returns false if the 15-minute unlock window has expired while typing.
      */
     fun verifyTanyaChallenge(userInput: String): Boolean {
+        if (getUnlockWindowState() !is UnlockWindowState.WindowOpen) {
+            return false
+        }
         val normalizedUser = normalizeHebrewText(userInput)
         val normalizedTarget = normalizeHebrewText(TANYA_CHAPTER_41_CHALLENGE)
         return normalizedUser == normalizedTarget
@@ -163,9 +182,23 @@ class LockdownManager(private val context: Context) {
     }
 
     private fun normalizeHebrewText(input: String): String {
-        // Remove Hebrew nikud/cantillation marks if any and collapse whitespace
-        return input
+        // 1. Normalize Hebrew gershayim/geresh & curly quotes to standard ASCII " and '
+        //    so abbreviations (הקב"ה, כנ"ל, וכמ"ש, ה') match regardless of keyboard quote key!
+        // 2. Remove nikud/cantillation, periods, commas, colons, semicolons, parentheses, and verse-surrounding quotes.
+        val unifiedQuotes = input
+            .replace('״', '"')
+            .replace('”', '"')
+            .replace('“', '"')
+            .replace('׳', '\'')
+            .replace('’', '\'')
+            .replace('‘', '\'')
             .replace(Regex("[\\u0591-\\u05C7]"), "")
+            .replace(Regex("[.,:;!?()\\-–—]"), " ")
+            // Strip surrounding quotation marks around words (like "הלא ... מלא") while keeping inside abbreviations (הקב"ה)
+            .replace(Regex("(^|\\s)\""), "$1")
+            .replace(Regex("\"(\\s|$)"), "$1")
+
+        return unifiedQuotes
             .replace(Regex("\\s+"), " ")
             .trim()
     }
@@ -173,11 +206,12 @@ class LockdownManager(private val context: Context) {
     companion object {
         private const val TAG = "LockdownManager"
 
-        // 45 minutes in milliseconds
+        // 45 minutes wait + 15 minutes open unlock window
         const val COOLDOWN_DURATION_MS = 45L * 60L * 1000L
+        const val UNLOCK_WINDOW_DURATION_MS = 15L * 60L * 1000L
 
-        // Tanya Chapter 41 manual typing challenge (no copy/paste allowed)
+        // Exact Tanya Chapter 41 text from "ברם" to "המלך" (exact printed abbreviations, normalized without periods/commas)
         const val TANYA_CHAPTER_41_CHALLENGE =
-            "ברם צריך להיות לזכרון תמיד ראשית כל העבודה ועיקרה ושרשה לקבוע בלבו ומוחו תחלה אמיתת ייחודו יתברך הנה ה' נצב עליו ומלא כל הארץ כבודו ומשגיח עליו ובוחן כליות ולב אם עובדו כראוי"
+            "ברם צריך להיות לזכרון תמיד ראשית העבודה ועיקרה ושרשה. והוא כי אף שהיראה היא שרש לסור מרע והאהבה לועשה טוב. אף על פי כן לא די לעורר האהבה לבדה לועשה טוב ולפחות צריך לעורר תחלה היראה הטבעית המסותרת בלב כל ישראל שלא למרוד במלך מלכי המלכים הקב\"ה כנ\"ל שתהא בהתגלות לבו או מוחו על כל פנים דהיינו להתבונן במחשבתו על כל פנים גדולת אין סוף ברוך הוא ומלכותו אשר היא מלכות כל עולמים עליונים ותחתונים ואיהו ממלא כל עלמין וסובב כל עלמין וכמ\"ש \"הלא את השמים ואת הארץ אני מלא\" ומניח העליונים ותחתונים ומייחד מלכותו על עמו ישראל בכלל ועליו בפרט כי חייב אדם לומר בשבילי נברא העולם והוא גם הוא מקבל עליו מלכותו להיות מלך עליו ולעבדו ולעשות רצונו בכל מיני עבודת עבד. והנה ה' נצב עליו ומלא כל הארץ כבודו ומביט עליו ובוחן כליות ולב אם עובדו כראוי. ועל כן צריך לעבוד לפניו באימה וביראה כעומד לפני המלך"
     }
 }
